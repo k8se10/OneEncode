@@ -24,9 +24,19 @@ const videoQuality = z.object({
   value: z.number().positive(),
 });
 
-const legBase = z.object({
-  id: z.string().min(1),
-  enabled: z.boolean().default(true),
+/**
+ * A rendition is "what to encode" — resolution/fps/bitrate/codec — decoupled
+ * from "where it goes" (a leg). Two or more legs referencing the same
+ * rendition id share exactly one encode process (see src/rendition/) instead
+ * of each paying for their own redundant decode+scale+encode — this is the
+ * whole point of splitting these apart. See CLAUDE.md architecture decision
+ * #9.
+ */
+const renditionSchema = z.object({
+  id: z
+    .string()
+    .min(1)
+    .regex(/^[a-zA-Z0-9_-]+$/, "rendition id must be URL-path-safe: letters, digits, '-' and '_' only"),
   resolution,
   fps: z.number().positive().default(60),
   videoBitrateKbps: z.number().positive().optional(),
@@ -34,6 +44,13 @@ const legBase = z.object({
   audioBitrateKbps: z.number().positive().default(160),
   keyframeIntervalSec: z.number().positive().default(2),
   encoderPreference: z.array(encoderName).min(1),
+});
+export type Rendition = z.infer<typeof renditionSchema>;
+
+const legBase = z.object({
+  id: z.string().min(1),
+  enabled: z.boolean().default(true),
+  renditionId: z.string().min(1),
   priority: z.number().int().default(0),
 });
 
@@ -65,15 +82,46 @@ export const restartPolicySchema = z.object({
   backoffMaxMs: z.number().int().positive().default(60000),
 });
 
-export const rootConfigSchema = z.object({
-  ingest: z.object({
-    listenUrl: z.string().url(),
-  }),
-  relay: relayConfigSchema,
-  encoderPriority: z.array(encoderName).min(1),
-  legs: z.array(legSchema).min(1),
-  restartPolicy: restartPolicySchema.default({}),
-});
+export const rootConfigSchema = z
+  .object({
+    ingest: z.object({
+      listenUrl: z.string().url(),
+    }),
+    relay: relayConfigSchema,
+    encoderPriority: z.array(encoderName).min(1),
+    renditions: z.array(renditionSchema).min(1),
+    legs: z.array(legSchema).min(1),
+    restartPolicy: restartPolicySchema.default({}),
+  })
+  .superRefine((config, ctx) => {
+    const renditionIds = new Set<string>();
+    for (const rendition of config.renditions) {
+      if (renditionIds.has(rendition.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Duplicate rendition id "${rendition.id}"`,
+          path: ["renditions"],
+        });
+      }
+      renditionIds.add(rendition.id);
+    }
+
+    const legIds = new Set<string>();
+    for (const leg of config.legs) {
+      if (legIds.has(leg.id)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate leg id "${leg.id}"`, path: ["legs"] });
+      }
+      legIds.add(leg.id);
+
+      if (!renditionIds.has(leg.renditionId)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `Leg "${leg.id}" references unknown renditionId "${leg.renditionId}"`,
+          path: ["legs"],
+        });
+      }
+    }
+  });
 
 export type RootConfig = z.infer<typeof rootConfigSchema>;
 export type EncoderName = z.infer<typeof encoderName>;

@@ -1,31 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { buildLegArgv, buildRelayArgv } from "../../src/legs/argvBuilder.js";
-import type { LegConfig } from "../../src/config/schema.js";
+import { buildEncodeArgv, buildCopyArgv, buildRelayArgv } from "../../src/legs/argvBuilder.js";
+import type { Rendition } from "../../src/config/schema.js";
 
-const baseLeg = {
-  id: "test-leg",
-  enabled: true,
+const baseRendition = {
+  id: "test-rendition",
   fps: 60,
   audioBitrateKbps: 160,
   keyframeIntervalSec: 2,
-  priority: 0,
 };
 
-describe("buildLegArgv", () => {
-  it("builds an rtmp-push leg with a bitrate-based encoder", () => {
-    const leg: LegConfig = {
-      ...baseLeg,
-      type: "rtmp-push",
-      destinationUrlEnv: "SOME_ENV",
+describe("buildEncodeArgv", () => {
+  it("builds an rtmp-push output with a bitrate-based encoder", () => {
+    const rendition: Rendition = {
+      ...baseRendition,
       resolution: { width: 1920, height: 1080 },
       videoBitrateKbps: 6000,
       encoderPreference: ["h264_nvenc"],
     };
-    const argv = buildLegArgv({
-      leg,
-      relayUrl: "rtmp://127.0.0.1:1935/relay/live",
-      encoder: "h264_nvenc",
-      destinationUrl: "rtmp://real.example.com/live/SECRET_KEY",
+    const argv = buildEncodeArgv("rtmp://127.0.0.1:1935/relay/live", rendition, "h264_nvenc", {
+      kind: "rtmp",
+      url: "rtmp://real.example.com/live/SECRET_KEY",
     });
 
     expect(argv).toContain("-i");
@@ -41,35 +35,16 @@ describe("buildLegArgv", () => {
     }
   });
 
-  it("throws if an rtmp-push leg is built without a destination URL", () => {
-    const leg: LegConfig = {
-      ...baseLeg,
-      type: "rtmp-push",
-      destinationUrlEnv: "SOME_ENV",
-      resolution: "source",
-      videoBitrateKbps: 3000,
-      encoderPreference: ["libx264"],
-    };
-    expect(() =>
-      buildLegArgv({ leg, relayUrl: "rtmp://127.0.0.1:1935/relay/live", encoder: "libx264" }),
-    ).toThrow(/destinationUrl/);
-  });
-
-  it("builds a local-file leg using cq quality mode", () => {
-    const leg: LegConfig = {
-      ...baseLeg,
-      type: "local-file",
-      outputDir: "recordings",
-      filenamePattern: "archive_{timestamp}.mp4",
+  it("builds a local-file output using cq quality mode, no scale filter at source resolution", () => {
+    const rendition: Rendition = {
+      ...baseRendition,
       resolution: "source",
       videoQuality: { mode: "cq", value: 19 },
       encoderPreference: ["h264_nvenc"],
     };
-    const argv = buildLegArgv({
-      leg,
-      relayUrl: "rtmp://127.0.0.1:1935/relay/live",
-      encoder: "h264_nvenc",
-      resolvedOutputPath: "D:\\projects\\OneEncode\\recordings\\archive_test.mp4",
+    const argv = buildEncodeArgv("rtmp://127.0.0.1:1935/relay/live", rendition, "h264_nvenc", {
+      kind: "local-file",
+      path: "D:\\projects\\OneEncode\\recordings\\archive_test.mp4",
     });
 
     expect(argv).not.toContain("-vf");
@@ -79,17 +54,37 @@ describe("buildLegArgv", () => {
   });
 
   it("throws if neither videoQuality nor videoBitrateKbps is set", () => {
-    const leg = {
-      ...baseLeg,
-      type: "local-file",
-      outputDir: "recordings",
-      filenamePattern: "x_{timestamp}.mp4",
+    const rendition = {
+      ...baseRendition,
       resolution: "source",
       encoderPreference: ["libx264"],
-    } as unknown as LegConfig;
+    } as unknown as Rendition;
     expect(() =>
-      buildLegArgv({ leg, relayUrl: "rtmp://x/relay/live", encoder: "libx264", resolvedOutputPath: "out.mp4" }),
+      buildEncodeArgv("rtmp://x/relay/live", rendition, "libx264", { kind: "local-file", path: "out.mp4" }),
     ).toThrow(/videoBitrateKbps/);
+  });
+});
+
+describe("buildCopyArgv", () => {
+  it("builds a stream-copy argv with no encode flags", () => {
+    const argv = buildCopyArgv("rtmp://127.0.0.1:1935/rendition/1080p60/live", {
+      kind: "rtmp",
+      url: "rtmp://real.example.com/live/SECRET_KEY",
+    });
+    expect(argv).toContain("-c");
+    expect(argv).toContain("copy");
+    expect(argv).not.toContain("-c:v");
+    expect(argv).not.toContain("-vf");
+    expect(argv.at(-1)).toBe("rtmp://real.example.com/live/SECRET_KEY");
+  });
+
+  it("builds a local-file stream-copy output", () => {
+    const argv = buildCopyArgv("rtmp://127.0.0.1:1935/rendition/1080p60/live", {
+      kind: "local-file",
+      path: "D:\\out.mp4",
+    });
+    expect(argv.at(-1)).toBe("D:\\out.mp4");
+    expect(argv).toContain("-movflags");
   });
 });
 

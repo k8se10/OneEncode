@@ -1,6 +1,6 @@
 import { loadConfig } from "../src/config/load.js";
 import { startRelayServer, stopRelayServer } from "../src/ingest/relayServer.js";
-import { buildLegArgv } from "../src/legs/argvBuilder.js";
+import { buildEncodeArgv } from "../src/legs/argvBuilder.js";
 import { superviseLeg, type LegSupervisor } from "../src/health/monitor.js";
 import { resolveOutputPath } from "../src/destinations/localFileDestination.js";
 
@@ -9,9 +9,10 @@ import { resolveOutputPath } from "../src/destinations/localFileDestination.js";
  * criteria): reproduces TODAY's naive approach — one independent ffmpeg
  * process per rendition, each pulling and decoding the SAME source
  * separately (config.ingest.listenUrl directly, NOT the single-decode
- * relay) — so the drop=/dup= numbers can be directly compared against
- * `npm start`'s single-decode design under identical leg definitions and
- * identical source content.
+ * relay, and NOT the rendition-dedup path either — this deliberately
+ * ignores dedup too, since the naive baseline never shared anything) — so
+ * the drop=/dup= numbers can be directly compared against `npm start`'s
+ * design under identical rendition definitions and identical source content.
  *
  * Usage: start MediaMTX + the synthetic test source first (or run this
  * against a real OBS source), then `npm run bench:baseline`.
@@ -35,15 +36,15 @@ async function main(): Promise<void> {
       console.log(`[bench-baseline] skipping non-local-file leg "${leg.id}" (baseline only compares local-file legs)`);
       continue;
     }
-    const encoder = leg.encoderPreference[0];
+    const rendition = config.renditions.find((r) => r.id === leg.renditionId);
+    if (!rendition) throw new Error(`No rendition "${leg.renditionId}" for leg "${leg.id}"`);
+    const encoder = rendition.encoderPreference[0];
     // Deliberately points at the ORIGINAL ingest, not the relay — this is
     // the naive "N independent decodes of the same source" baseline.
     const buildArgv = () =>
-      buildLegArgv({
-        leg,
-        relayUrl: config.ingest.listenUrl,
-        encoder,
-        resolvedOutputPath: resolveOutputPath({ ...leg, filenamePattern: `baseline_${leg.filenamePattern}` }),
+      buildEncodeArgv(config.ingest.listenUrl, rendition, encoder, {
+        kind: "local-file",
+        path: resolveOutputPath({ ...leg, filenamePattern: `baseline_${leg.filenamePattern}` }),
       });
     controllers.push(
       superviseLeg({ legId: `baseline-${leg.id}`, encoderLabel: encoder, buildArgv, restartPolicy: config.restartPolicy }),

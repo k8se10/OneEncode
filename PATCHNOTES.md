@@ -1,6 +1,24 @@
 # PATCHNOTES
 
-## v0.2.0 (in progress) — Phase 4: health/restart supervision
+## v0.3.0 (in progress) — Phase 3.5: rendition-level dedup
+
+### Added
+- Config schema split: `renditions` (what to encode — resolution/fps/bitrate/codec) are now separate, named, reusable objects; `legs` (where it goes — a platform push or local file) reference a rendition by `renditionId` instead of inlining their own encode spec. Schema-level validation rejects a leg referencing an unknown rendition, and duplicate rendition/leg ids, before anything starts.
+- `src/rendition/group.ts` — `groupLegsByRendition` (pure, unit tested) groups enabled legs by shared rendition, `buildRenditionUrl` derives each rendition's MediaMTX path from the existing relay URL's host/port.
+- `src/rendition/renditionProcess.ts` — one supervised encode process per unique rendition actually referenced by an enabled leg, publishing to `rtmp://<host>/rendition/<id>`.
+- `src/legs/argvBuilder.ts`: `buildEncodeArgv` (generic decode+scale+encode, replaces the old leg-specific `buildLegArgv`) and `buildCopyArgv` (cheap `-c copy` stream-copy, used by every destination leg now that encoding happens once per rendition instead of once per leg).
+- `src/index.ts` rewritten around the two-stage pipeline: group legs by rendition, spawn one supervised rendition-encode per unique profile, spawn one supervised stream-copy leg per destination.
+- `config/legs.example.yaml` and `config/legs.local.yaml` updated to the new schema, both including a deliberate dedup case (two legs sharing one rendition) so the mechanism is demonstrated, not just described.
+- 4 new unit tests for rendition grouping/URL derivation; argv-builder tests updated for the new function signatures. 22 tests total.
+
+### Verified live
+- Configured two local-file legs (`local-archive-1`, `local-archive-2`) against the same rendition id. Log confirmed exactly **one** `rendition-shared-1080p60` encode process ran while both legs' stream-copy processes reported byte-for-byte identical bitrate at every sample. Output files confirmed byte-identical via `ffprobe`/file size (23,817,338 bytes, 32.021167s duration, both files) — not just "close," the exact same encoded bytes remuxed twice.
+- A third leg on a different rendition (`local-720p`) correctly got its own independent encode process, confirming dedup only collapses genuinely identical profiles, not everything.
+- When the upstream source stopped (test script's configured duration elapsed), the whole chain (rendition encodes → dependent legs) correctly entered its restart/backoff loop rather than hanging or crashing the orchestrator — no special-case coordination code needed, since a rendition-encode outage is just "connection failed" from a dependent leg's point of view, handled by the same retry logic every leg already has.
+
+---
+
+## v0.2.0 — Phase 4: health/restart supervision
 
 ### Added
 - `src/health/monitor.ts: superviseLeg` — full leg lifecycle supervisor superseding `legProcess.ts`'s narrower `spawnLegWithRetry`. Owns spawn, initial-connection-race retry, ongoing crash restart with exponential backoff (`computeBackoffMs`), a watchdog restart if no stats sample arrives for 20s while the process is still alive (some ffmpeg failure modes hang rather than exit), and a rolling-hour restart cap (`isOverRestartCap`) past which a leg is marked `failed` and surfaced loudly instead of looping forever. Each leg's supervisor state (attempt count, backoff, restart history) is fully independent of every other leg's.

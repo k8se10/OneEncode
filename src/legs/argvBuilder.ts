@@ -1,21 +1,18 @@
-import type { EncoderName, LegConfig } from "../config/schema.js";
+import type { EncoderName, Rendition } from "../config/schema.js";
 
 /**
  * Encoder-specific rate-control args. Kept isolated here so adding a new
  * encoder means touching exactly one place, not every call site.
  */
-function videoEncodeArgs(
-  encoder: EncoderName,
-  leg: LegConfig,
-): string[] {
-  const gop = String(Math.round(leg.fps * leg.keyframeIntervalSec));
-  const quality = leg.videoQuality;
-  const bitrateK = leg.videoBitrateKbps;
+function videoEncodeArgs(encoder: EncoderName, rendition: Rendition): string[] {
+  const gop = String(Math.round(rendition.fps * rendition.keyframeIntervalSec));
+  const quality = rendition.videoQuality;
+  const bitrateK = rendition.videoBitrateKbps;
 
   const requireBitrateK = (): number => {
     if (bitrateK === undefined) {
       throw new Error(
-        `Leg "${leg.id}": must set videoBitrateKbps when videoQuality isn't set (config schema should have caught this)`,
+        `Rendition "${rendition.id}": must set videoBitrateKbps when videoQuality isn't set (config schema should have caught this)`,
       );
     }
     return bitrateK;
@@ -77,54 +74,55 @@ function videoEncodeArgs(
   }
 }
 
-function scaleFilterArgs(leg: LegConfig): string[] {
-  if (leg.resolution === "source") return [];
-  return ["-vf", `scale=${leg.resolution.width}:${leg.resolution.height}`];
+function scaleFilterArgs(rendition: Rendition): string[] {
+  if (rendition.resolution === "source") return [];
+  return ["-vf", `scale=${rendition.resolution.width}:${rendition.resolution.height}`];
 }
 
-export interface BuildLegArgvOptions {
-  leg: LegConfig;
-  relayUrl: string;
-  encoder: EncoderName;
-  /** Required when leg.type === "rtmp-push"; the resolved real destination URL (never logged raw). */
-  destinationUrl?: string;
-  /** Required when leg.type === "local-file"; the fully resolved output file path. */
-  resolvedOutputPath?: string;
+/** Where an encoded (or copied) stream ends up — shared by every argv builder below. */
+export type EncodeOutputSink = { kind: "rtmp"; url: string } | { kind: "local-file"; path: string };
+
+function outputSinkArgs(output: EncodeOutputSink): string[] {
+  return output.kind === "rtmp" ? ["-f", "flv", output.url] : ["-movflags", "+faststart", output.path];
 }
 
 /**
- * Builds an ffmpeg argv array for one destination leg, reading from the local
- * relay (never the original ingest). Always an array, never a shell string —
- * every value here may originate from config, so no shell interpolation.
+ * Builds an ffmpeg argv array that decodes `inputUrl`, applies one
+ * rendition's scale/encode profile, and writes to `output`. Used for the
+ * per-rendition encode step (src/rendition/) and, in the baseline benchmark
+ * script, to simulate today's naive "one full decode+encode per destination"
+ * approach by pointing inputUrl at the original ingest directly instead of
+ * the relay. Always an argv array, never a shell string.
  */
-export function buildLegArgv(opts: BuildLegArgvOptions): string[] {
-  const { leg, relayUrl, encoder } = opts;
-
-  const argv: string[] = [
+export function buildEncodeArgv(
+  inputUrl: string,
+  rendition: Rendition,
+  encoder: EncoderName,
+  output: EncodeOutputSink,
+): string[] {
+  return [
     "-hide_banner",
     "-loglevel", "warning",
     "-stats",
-    "-i", relayUrl,
-    ...scaleFilterArgs(leg),
-    ...videoEncodeArgs(encoder, leg),
+    "-i", inputUrl,
+    ...scaleFilterArgs(rendition),
+    ...videoEncodeArgs(encoder, rendition),
     "-c:a", "aac",
-    "-b:a", `${leg.audioBitrateKbps}k`,
+    "-b:a", `${rendition.audioBitrateKbps}k`,
     "-ar", "48000",
+    ...outputSinkArgs(output),
   ];
+}
 
-  if (leg.type === "rtmp-push") {
-    if (!opts.destinationUrl) {
-      throw new Error(`buildLegArgv: leg "${leg.id}" is rtmp-push but no destinationUrl was provided`);
-    }
-    argv.push("-f", "flv", opts.destinationUrl);
-  } else {
-    if (!opts.resolvedOutputPath) {
-      throw new Error(`buildLegArgv: leg "${leg.id}" is local-file but no resolvedOutputPath was provided`);
-    }
-    argv.push("-movflags", "+faststart", opts.resolvedOutputPath);
-  }
-
-  return argv;
+/**
+ * Builds a cheap stream-copy argv (`-c copy`, no decode/re-encode) from a
+ * rendition-relay path to a leg's real destination. This is what makes
+ * rendition dedup (CLAUDE.md architecture decision #9) actually cheap: N
+ * destinations sharing one rendition each just remux the same already-
+ * encoded bytes instead of re-encoding them.
+ */
+export function buildCopyArgv(inputUrl: string, output: EncodeOutputSink): string[] {
+  return ["-hide_banner", "-loglevel", "warning", "-stats", "-i", inputUrl, "-c", "copy", ...outputSinkArgs(output)];
 }
 
 /** Builds the argv for the single decode/relay process (source -> local mezzanine relay). */

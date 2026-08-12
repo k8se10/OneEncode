@@ -89,11 +89,8 @@ export function loadConfig(): LoadedConfig {
     );
   }
 
-  const enabledIds = config.legs.filter((leg) => leg.enabled).map((leg) => leg.id);
-  const duplicateIds = enabledIds.filter((id, i) => enabledIds.indexOf(id) !== i);
-  if (duplicateIds.length > 0) {
-    throw new ConfigError(`Duplicate leg id(s) in config: ${[...new Set(duplicateIds)].join(", ")}`);
-  }
+  // Duplicate leg/rendition ids and dangling renditionId references are
+  // already rejected by rootConfigSchema's superRefine above.
 
   return { config, destinations: { rtmpUrlByLegId } };
 }

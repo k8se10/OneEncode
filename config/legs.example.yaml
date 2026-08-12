@@ -1,9 +1,16 @@
-# OneEncode leg configuration template.
+# OneEncode configuration template.
 #
 # Copy this file to legs.local.yaml and fill in real values.
 # legs.local.yaml is gitignored — never commit real destination details.
 # Real stream keys/URLs go in secrets.local.yaml (see secrets.local.example.yaml),
 # referenced here only by env-var name via `destinationUrlEnv`.
+#
+# Renditions describe WHAT to encode (resolution/fps/bitrate/codec). Legs
+# describe WHERE it goes (a platform push or a local file) and reference a
+# rendition by id. Two or more legs referencing the SAME renditionId share
+# exactly one encode process instead of each paying for their own redundant
+# decode+scale+encode — see CLAUDE.md architecture decision #9. The example
+# below deliberately shows platform-a and platform-c sharing "1080p60-6M".
 
 ingest:
   # Where the local encoder (e.g. OBS) publishes the source stream.
@@ -11,51 +18,72 @@ ingest:
 
 relay:
   # Internal mezzanine re-encode published by the single decode/relay process.
-  # All legs read from this, never from `ingest` directly.
+  # Every rendition reads from this, never from `ingest` directly.
   url: "rtmp://127.0.0.1:1935/relay/live"
   encoder: h264_nvenc
   preset: p1
   tuneLowLatency: true
   bitrateKbps: 40000
 
-# Default fallback order when a leg's own encoderPreference isn't set explicitly.
+# Default fallback order when a rendition's own encoderPreference isn't set explicitly.
 encoderPriority:
   - h264_nvenc
   - h264_amf
   - libx264
 
-legs:
-  - id: platform-a-1080p
-    enabled: true
-    type: rtmp-push
-    destinationUrlEnv: ONEENCODE_PLATFORM_A_URL
+renditions:
+  - id: 1080p60-6M
     resolution: { width: 1920, height: 1080 }
+    fps: 60
     videoBitrateKbps: 6000
     audioBitrateKbps: 160
     keyframeIntervalSec: 2
     encoderPreference: [h264_nvenc, h264_amf, libx264]
-    priority: 10
 
-  - id: platform-b-720p
-    enabled: true
-    type: rtmp-push
-    destinationUrlEnv: ONEENCODE_PLATFORM_B_URL
+  - id: 720p60-3.5M
     resolution: { width: 1280, height: 720 }
+    fps: 60
     videoBitrateKbps: 3500
     audioBitrateKbps: 128
     keyframeIntervalSec: 2
     encoderPreference: [h264_amf, libx264]
+
+  - id: source-cq19
+    resolution: source
+    fps: 60
+    videoQuality: { mode: cq, value: 19 }
+    audioBitrateKbps: 192
+    keyframeIntervalSec: 2
+    encoderPreference: [h264_nvenc, libx264]
+
+legs:
+  - id: platform-a
+    enabled: true
+    type: rtmp-push
+    renditionId: 1080p60-6M
+    destinationUrlEnv: ONEENCODE_PLATFORM_A_URL
+    priority: 10
+
+  - id: platform-c
+    enabled: true
+    type: rtmp-push
+    renditionId: 1080p60-6M   # same rendition as platform-a -> shares one encode, not two
+    destinationUrlEnv: ONEENCODE_PLATFORM_C_URL
+    priority: 9
+
+  - id: platform-b
+    enabled: true
+    type: rtmp-push
+    renditionId: 720p60-3.5M
+    destinationUrlEnv: ONEENCODE_PLATFORM_B_URL
     priority: 5
 
   - id: local-archive-source-res
     enabled: true
     type: local-file
+    renditionId: source-cq19
     outputDir: "recordings"
     filenamePattern: "archive_{timestamp}.mp4"
-    resolution: source
-    videoQuality: { mode: cq, value: 19 }
-    audioBitrateKbps: 192
-    encoderPreference: [h264_nvenc, libx264]
     priority: 1
 
 restartPolicy:
