@@ -125,6 +125,62 @@ export function buildCopyArgv(inputUrl: string, output: EncodeOutputSink): strin
   return ["-hide_banner", "-loglevel", "warning", "-stats", "-i", inputUrl, "-c", "copy", ...outputSinkArgs(output)];
 }
 
+/**
+ * Encoder-specific low-latency args for the relay's mezzanine re-encode.
+ * Split out because NVENC's `-tune ull`/`-rc cbr` are NOT generic ffmpeg
+ * flags — they're NVENC-only syntax. Passing them to libx264/libx265/AMF
+ * makes ffmpeg reject the command outright. This went unnoticed for a long
+ * time because every test in this project so far used the schema default
+ * (`h264_nvenc`) for `relay.encoder` — found via live testing once a
+ * non-NVENC relay encoder was actually tried (see PATCHNOTES.md).
+ */
+function relayEncodeArgs(encoder: EncoderName, preset: string, bitrateKbps: number): string[] {
+  const bufsizeK = Math.round(bitrateKbps / 2);
+  switch (encoder) {
+    case "h264_nvenc":
+    case "hevc_nvenc":
+    case "av1_nvenc":
+      return [
+        "-c:v", encoder,
+        "-preset", preset,
+        "-tune", "ull",
+        "-rc", "cbr",
+        "-b:v", `${bitrateKbps}k`, "-maxrate", `${bitrateKbps}k`, "-bufsize", `${bufsizeK}k`,
+        "-g", "60", "-bf", "0",
+      ];
+
+    case "h264_amf":
+    case "hevc_amf":
+    case "av1_amf":
+      // AMF has no direct equivalent of NVENC's "-tune ull" and doesn't use
+      // a generic "-preset" value — "-quality speed" is its own low-latency
+      // knob, same as the rendition encoder args use elsewhere in this file.
+      return [
+        "-c:v", encoder,
+        "-quality", "speed",
+        "-rc", "cbr",
+        "-b:v", `${bitrateKbps}k`,
+        "-g", "60",
+      ];
+
+    case "libx264":
+    case "libx265":
+      // libx264/265 has no "-rc" option and no NVENC-style numbered presets
+      // ("p1" etc, the schema's default, is meaningless here) — the caller
+      // is responsible for setting relay.preset to a real libx264 preset
+      // name (e.g. "ultrafast") when choosing this encoder family; ffmpeg
+      // will fail with a clear "unknown preset" error otherwise, not a
+      // confusing crash.
+      return [
+        "-c:v", encoder,
+        "-preset", preset,
+        "-tune", "zerolatency",
+        "-b:v", `${bitrateKbps}k`, "-maxrate", `${bitrateKbps}k`, "-bufsize", `${bufsizeK}k`,
+        "-g", "60", "-bf", "0",
+      ];
+  }
+}
+
 /** Builds the argv for the single decode/relay process (source -> local mezzanine relay). */
 export function buildRelayArgv(ingestUrl: string, relayPublishUrl: string, opts: {
   encoder: EncoderName;
@@ -136,15 +192,7 @@ export function buildRelayArgv(ingestUrl: string, relayPublishUrl: string, opts:
     "-loglevel", "warning",
     "-stats",
     "-i", ingestUrl,
-    "-c:v", opts.encoder,
-    "-preset", opts.preset,
-    "-tune", "ull",
-    "-rc", "cbr",
-    "-b:v", `${opts.bitrateKbps}k`,
-    "-maxrate", `${opts.bitrateKbps}k`,
-    "-bufsize", `${Math.round(opts.bitrateKbps / 2)}k`,
-    "-g", "60",
-    "-bf", "0",
+    ...relayEncodeArgs(opts.encoder, opts.preset, opts.bitrateKbps),
     "-c:a", "aac",
     "-b:a", "192k",
     "-ar", "48000",

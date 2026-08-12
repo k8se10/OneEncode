@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const encoderName = z.enum([
+export const encoderName = z.enum([
   "h264_nvenc",
   "hevc_nvenc",
   "av1_nvenc",
@@ -32,7 +32,7 @@ const videoQuality = z.object({
  * whole point of splitting these apart. See CLAUDE.md architecture decision
  * #9.
  */
-const renditionSchema = z.object({
+export const renditionSchema = z.object({
   id: z
     .string()
     .min(1)

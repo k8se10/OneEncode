@@ -1,5 +1,17 @@
 # PATCHNOTES
 
+## v0.8.0 — rtmp-push code path validated end-to-end; real relay-encoder bug found and fixed
+
+Context: three parallel background agents were set to work on the open items from v0.7.0 (jitter root cause, add/edit/remove-leg UI, de-risking Phase 2 without real credentials). All three hit the session's account-level API rate limit mid-task and were cut off before finishing. This entry covers picking up and completing the Phase 2 de-risking work; the other two are covered separately below once reviewed and completed.
+
+### Fixed — real bug, found via live testing, not assumed
+- **`buildRelayArgv` unconditionally emitted NVENC-only flags** (`-tune ull`, `-rc cbr`) regardless of the configured `relay.encoder`. `EncoderName` is a schema-level union that explicitly permits `libx264`/`libx265`/AMF variants for `relay.encoder`, but passing NVENC-only flags to any of those makes ffmpeg reject the command outright at launch. **This went unnoticed through this entire project so far because every prior test used the schema default (`h264_nvenc`)** — it surfaced the moment a non-NVENC relay encoder was actually tried. Fixed by splitting relay encode-arg construction into per-encoder-family branches (`relayEncodeArgs`, mirroring the existing pattern in `videoEncodeArgs`): NVENC keeps `-tune ull`/`-rc cbr`; AMF uses `-quality speed` (ignoring the NVENC-shaped `preset` value); libx264/265 uses the real `-tune zerolatency` and no `-rc`. 2 new unit tests lock in the fix (one per non-NVENC family, asserting the NVENC-only flags are actually absent).
+
+### Verified live — the rtmp-push code path, never exercised before in this project
+Every leg tested anywhere in this project up to this point was `type: "local-file"` — the `rtmp-push` variant (`resolveRtmpDestination`, `buildCopyArgv` with an rtmp output sink, secrets resolution from `config/secrets.local.yaml`) had real code and real unit tests for its pieces, but had never actually been run end-to-end. Built a self-contained validation (spawned its own MediaMTX on port 1965, its own synthetic source, the real `buildRelayArgv`/`buildEncodeArgv`/`resolveRtmpDestination`/`buildCopyArgv` functions, pushed to a local stand-in "destination" path instead of a real platform, then acted as that platform — recorded 8s from the stand-in path and `ffprobe`'d it) — confirmed a real, valid, playable H.264/AAC stream was received (1280x720, correct codecs and duration). **RESULT: PASS.** This directly de-risks Phase 2 (adding the first real platform leg) — the plumbing between config, secrets resolution, and the actual RTMP push is now proven correct independent of having real platform credentials.
+
+---
+
 ## v0.7.0 — Phase 6 dashboard frontend, live-verified in a real browser
 
 ### Added

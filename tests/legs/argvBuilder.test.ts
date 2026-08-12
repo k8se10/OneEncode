@@ -100,4 +100,32 @@ describe("buildRelayArgv", () => {
     expect(argv).toContain("-tune");
     expect(argv).toContain("ull");
   });
+
+  it("does not emit NVENC-only flags (-tune ull, -rc) for a libx264 relay encoder", () => {
+    const argv = buildRelayArgv("rtmp://127.0.0.1:1935/ingest/live", "rtmp://127.0.0.1:1935/relay/live", {
+      encoder: "libx264",
+      preset: "ultrafast",
+      bitrateKbps: 20000,
+    });
+    // Real bug found via live testing (see PATCHNOTES.md): these NVENC-only
+    // flags used to be emitted unconditionally, which made ffmpeg reject the
+    // command outright for any non-NVENC relay.encoder.
+    expect(argv).not.toContain("-rc");
+    const tuneIdx = argv.indexOf("-tune");
+    expect(argv[tuneIdx + 1]).toBe("zerolatency"); // libx264's real low-latency tune, not NVENC's "ull"
+    expect(argv).toContain("libx264");
+    expect(argv).toContain("ultrafast");
+  });
+
+  it("uses AMF's -quality speed instead of NVENC's -tune/-preset for an AMF relay encoder", () => {
+    const argv = buildRelayArgv("rtmp://127.0.0.1:1935/ingest/live", "rtmp://127.0.0.1:1935/relay/live", {
+      encoder: "h264_amf",
+      preset: "p1", // deliberately an NVENC-shaped preset value — AMF must ignore it, not pass it through
+      bitrateKbps: 20000,
+    });
+    expect(argv).not.toContain("-tune");
+    expect(argv).not.toContain("p1");
+    expect(argv).toContain("-quality");
+    expect(argv).toContain("speed");
+  });
 });
