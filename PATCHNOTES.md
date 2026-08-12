@@ -1,5 +1,11 @@
 # PATCHNOTES
 
+## Docs — project licensed, source-available (2026-08-13)
+
+Added a real `LICENSE` file at the repo root, mirroring the structure of this author's sibling MW3 controller project's own license (read directly from that project's real `LICENSE` file, not guessed/templated from memory): source is fully open/viewable/forkable, but the software and any fork/derivative must always remain free to end users — no charging for it by anyone other than the copyright holder. This is a deliberate restriction, so the project is accurately described as **source-available**, not OSI open-source, going forward in any doc/README. Adapted the MW3 license's game/Activision-specific clause into an equivalent for OneEncode's actual context (no rights granted to any third-party streaming platform's trademarks/APIs/services). CLAUDE.md §6 updated with the real per-dependency licensing detail (FFmpeg — external, never bundled; MediaMTX — MIT, confirmed by reading its actual downloaded LICENSE file directly).
+
+---
+
 ## v0.9.0 — add/edit/remove legs through the dashboard, live-verified
 
 Closes the one documented gap from v0.7.0's Phase 6 dashboard: config changes required hand-editing YAML + a restart. That restart requirement is unchanged (no hot-reload), but the hand-editing is no longer required.
