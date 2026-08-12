@@ -1,0 +1,29 @@
+node_modules/
+dist/
+
+# Real per-machine config and secrets — never commit.
+# Deliberately narrow (not "config/secrets*.yaml") so committed templates
+# like secrets.local.example.yaml aren't accidentally excluded too.
+config/legs.local.yaml
+config/secrets.local.yaml
+config/*.local.yaml
+
+# Runtime/generated state, logs, recordings — never commit
+state/
+logs/
+recordings/
+
+# Sensitive internal notes (per CLAUDE.md §2A redaction posture)
+re_notes/
+
+# Vendored third-party binaries fetched by setup scripts
+tools/mediamtx/
+
+# Web dashboard build output
+web/dist/
+web/node_modules/
+
+# Editor/OS cruft
+.vscode/
+*.log
+Thumbs.db

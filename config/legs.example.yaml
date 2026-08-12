@@ -1,0 +1,64 @@
+# OneEncode leg configuration template.
+#
+# Copy this file to legs.local.yaml and fill in real values.
+# legs.local.yaml is gitignored — never commit real destination details.
+# Real stream keys/URLs go in secrets.local.yaml (see secrets.local.example.yaml),
+# referenced here only by env-var name via `destinationUrlEnv`.
+
+ingest:
+  # Where the local encoder (e.g. OBS) publishes the source stream.
+  listenUrl: "rtmp://127.0.0.1:1935/ingest/live"
+
+relay:
+  # Internal mezzanine re-encode published by the single decode/relay process.
+  # All legs read from this, never from `ingest` directly.
+  url: "rtmp://127.0.0.1:1935/relay/live"
+  encoder: h264_nvenc
+  preset: p1
+  tuneLowLatency: true
+  bitrateKbps: 40000
+
+# Default fallback order when a leg's own encoderPreference isn't set explicitly.
+encoderPriority:
+  - h264_nvenc
+  - h264_amf
+  - libx264
+
+legs:
+  - id: platform-a-1080p
+    enabled: true
+    type: rtmp-push
+    destinationUrlEnv: ONEENCODE_PLATFORM_A_URL
+    resolution: { width: 1920, height: 1080 }
+    videoBitrateKbps: 6000
+    audioBitrateKbps: 160
+    keyframeIntervalSec: 2
+    encoderPreference: [h264_nvenc, h264_amf, libx264]
+    priority: 10
+
+  - id: platform-b-720p
+    enabled: true
+    type: rtmp-push
+    destinationUrlEnv: ONEENCODE_PLATFORM_B_URL
+    resolution: { width: 1280, height: 720 }
+    videoBitrateKbps: 3500
+    audioBitrateKbps: 128
+    keyframeIntervalSec: 2
+    encoderPreference: [h264_amf, libx264]
+    priority: 5
+
+  - id: local-archive-source-res
+    enabled: true
+    type: local-file
+    outputDir: "recordings"
+    filenamePattern: "archive_{timestamp}.mp4"
+    resolution: source
+    videoQuality: { mode: cq, value: 19 }
+    audioBitrateKbps: 192
+    encoderPreference: [h264_nvenc, libx264]
+    priority: 1
+
+restartPolicy:
+  maxRestartsPerHour: 5
+  backoffInitialMs: 2000
+  backoffMaxMs: 60000

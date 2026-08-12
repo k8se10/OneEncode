@@ -1,0 +1,33 @@
+# Minimal MediaMTX config for OneEncode's local relay.
+#
+# One instance handles both publish points:
+#   rtmp://127.0.0.1:1935/ingest/live  <- OBS (or the synthetic test source) publishes here
+#   rtmp://127.0.0.1:1935/relay/live   <- the decode/relay ffmpeg process republishes here;
+#                                          every destination leg reads from this path, never
+#                                          from /ingest/live directly.
+#
+# Paths are dynamic by default in MediaMTX — no per-path section needed for
+# this use case, just the RTMP listener itself.
+
+logLevel: info
+logDestinations: [stdout]
+
+rtmp: yes
+rtmpAddress: :1935
+
+# Not needed for this project's RTMP-only relay use case — disabled to keep
+# the listener surface minimal (this binds to a local port either way, but
+# no reason to open protocols we don't use).
+rtsp: no
+hls: no
+webrtc: no
+srt: no
+api: no
+moq: no
+
+# Without this, MediaMTX has no configured paths at all and refuses both
+# publishers and readers on any path name with an immediate I/O error —
+# this catch-all is what makes /ingest/live and /relay/live work as
+# dynamic, un-pre-declared paths.
+paths:
+  all_others:
