@@ -10,6 +10,8 @@ export interface LegProcessHandle {
   startedAt: number;
   /** Resolves when the process exits. */
   exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  /** Call before intentionally stopping this process, so its leg_exit log entry correctly records wasExpected: true instead of looking like a crash. */
+  markExpectedExit(): void;
 }
 
 /**
@@ -34,6 +36,7 @@ export function spawnLegProcess(
   // why plain process-kill semantics on Windows aren't enough here.
   const child = spawn("ffmpeg", argv, { windowsHide: true, stdio: ["pipe", "ignore", "pipe"] });
   const startedAt = Date.now();
+  let expectedExit = false;
 
   logEvent({ event: "leg_start", legId, argv, encoder: encoderLabel, pid: child.pid ?? -1 });
 
@@ -73,7 +76,7 @@ export function spawnLegProcess(
         exitCode: code,
         signal,
         uptimeMs: Date.now() - startedAt,
-        wasExpected: false,
+        wasExpected: expectedExit,
       });
       if (code !== 0 && stderrTail.length > 0) {
         const redactedTail = stderrTail.map((line) => redactObject(line));
@@ -83,7 +86,15 @@ export function spawnLegProcess(
     });
   });
 
-  return { legId, process: child, startedAt, exited };
+  return {
+    legId,
+    process: child,
+    startedAt,
+    exited,
+    markExpectedExit: () => {
+      expectedExit = true;
+    },
+  };
 }
 
 /**
@@ -95,6 +106,7 @@ export function spawnLegProcess(
  * time (e.g. it's already wedged).
  */
 export function stopLegProcess(handle: LegProcessHandle, timeoutMs = 5000): Promise<void> {
+  handle.markExpectedExit();
   return new Promise((resolve) => {
     let settled = false;
     const finish = () => {

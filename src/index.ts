@@ -1,6 +1,7 @@
 import { loadConfig, ConfigError } from "./config/load.js";
 import { logEvent } from "./logging/logger.js";
 import { startPipeline } from "./pipeline.js";
+import { startUiServer } from "./ui/server.js";
 
 /**
  * Orchestrator entrypoint. Pipeline-building logic lives in src/pipeline.ts
@@ -21,6 +22,7 @@ async function main(): Promise<void> {
   const { config, destinations } = loaded;
 
   const pipeline = await startPipeline(config, destinations);
+  const ui = startUiServer(pipeline);
   console.log(`[oneencode] Press Ctrl+C to stop.`);
 
   let shuttingDown = false;
@@ -28,6 +30,7 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`\n[oneencode] shutting down...`);
+    ui.close();
     await pipeline.stopAll();
     process.exit(0);
   };

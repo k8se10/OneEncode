@@ -6,6 +6,20 @@ import { buildRenditionUrl } from "./group.js";
 export type RenditionEncodeController = LegSupervisor;
 
 /**
+ * Pure argv construction for a rendition's encode step, split out from
+ * startRenditionEncode() so a caller that needs to rebuild the exact same
+ * command (e.g. a manual dashboard restart, see src/pipeline.ts) can do so
+ * without spawning a throwaway process just to get the argv back.
+ */
+export function buildRenditionEncodeArgv(config: RootConfig, rendition: Rendition, encoder: string): string[] {
+  const renditionUrl = buildRenditionUrl(config.relay.url, rendition.id);
+  return buildEncodeArgv(config.relay.url, rendition, encoder as Rendition["encoderPreference"][number], {
+    kind: "rtmp",
+    url: renditionUrl,
+  });
+}
+
+/**
  * Spawns the one encode process for a given rendition: reads the mezzanine
  * relay, applies this rendition's scale/encode profile exactly once, and
  * republishes to a rendition-specific MediaMTX path. Every leg referencing
@@ -18,11 +32,7 @@ export type RenditionEncodeController = LegSupervisor;
  * already has) until this comes back — no extra coordination needed.
  */
 export function startRenditionEncode(config: RootConfig, rendition: Rendition, encoder: string): RenditionEncodeController {
-  const renditionUrl = buildRenditionUrl(config.relay.url, rendition.id);
-  const argv = buildEncodeArgv(config.relay.url, rendition, encoder as Rendition["encoderPreference"][number], {
-    kind: "rtmp",
-    url: renditionUrl,
-  });
+  const argv = buildRenditionEncodeArgv(config, rendition, encoder);
   return superviseLeg({
     legId: `rendition-${rendition.id}`,
     encoderLabel: encoder,

@@ -1,5 +1,31 @@
 # PATCHNOTES
 
+## v0.6.0 (in progress) — Phase 6 dashboard backend
+
+### Added
+- `src/ui/server.ts` — Express + WebSocket server, bound to `127.0.0.1` only, serving the REST API and (once built) the static frontend from `web/dist`.
+- `src/ui/auth.ts` — local token auth, generated on first run to gitignored `state/ui-token.txt`, `Authorization: Bearer` for REST and a `?token=` query param for the WebSocket handshake (browser WS clients can't set custom headers).
+- `src/ui/liveState.ts` — tails today's structured log continuously (byte-offset based, no re-reading) into an in-memory `legId -> latest stats` map, broadcasting updates over WebSocket. Decoupled from the core supervisor, same pattern as the benchmark scripts' jitter report.
+- `src/ui/api.ts` — `GET /api/status` (full leg/rendition list with live state + stats, secrets never included since `LegConfig` only ever stores a destination env-var *name*, not a resolved value), `POST /api/legs/:id/stop|restart`, `POST /api/renditions/:id/stop|restart`.
+- `src/pipeline.ts`: `stopManaged`/`restartManaged` — a manual restart respawns a fresh supervised process reusing the original argv-building closure and (for renditions) the originally-selected encoder, without re-running NVENC session selection (would double-reserve tracker slots otherwise).
+- `src/rendition/renditionProcess.ts`: extracted `buildRenditionEncodeArgv` as a pure function, separated from `startRenditionEncode`'s side-effecting spawn — needed so a manual restart can rebuild the exact argv without spawning a throwaway process just to get it.
+
+### Fixed
+- **Caught and fixed mid-build**: an early version of `pipeline.ts`'s restart-descriptor plumbing accidentally called `startRenditionEncode` (which spawns a real process) just to probe a value, then discarded it — a real bug that would have spawned duplicate rendition-encode processes as a side effect of building an argv string. Caught before it ever ran, via the `buildRenditionEncodeArgv` extraction above.
+- **Real logging accuracy bug, found and fixed**: `leg_exit`'s `wasExpected` field was hardcoded to `false` unconditionally — a deliberate stop (via the dashboard, orchestrator shutdown, or a watchdog-triggered restart) was logged identically to a genuine crash. Added `LegProcessHandle.markExpectedExit()`, called by `stopLegProcess` before it ever writes `q`/kills the process, so the log now correctly distinguishes "we stopped this on purpose" from "this died on its own."
+
+### Verified live
+- Auth: confirmed `/api/status` returns `401` with no/wrong token, and full data with the correct one.
+- `/api/status` returns real live stats (fps/bitrate/drop/dup, updating in near-real-time) for every leg and rendition.
+- Stop: stopped `local-720p-archive` via the API well before the test source ended (to avoid confounding with source-loss crash-looping seen in an earlier, noisier test); confirmed it stayed `state: "stopped"` with no restart, while `local-archive-1`/`local-archive-2` and both renditions kept running unaffected — failure isolation holds through the dashboard's own control path too, not just process kills.
+- Restart: restarted the stopped leg via the API; confirmed it came back to `state: "running"` with fresh `drop=0` stats within seconds.
+
+### Known limitation (documented, not silently omitted)
+- **Add/edit/remove destination legs through the UI is not built.** Config changes still require hand-editing `config/legs.local.yaml`/`secrets.local.yaml` and an orchestrator restart, same as before this dashboard existed. The original locked scope (CLAUDE.md architecture decision #8) named this as first-version scope; it's deliberately deferred rather than rushed, and documented here as a real gap, not claimed as done.
+- **Frontend not built yet** — the API has been verified via curl only. `web/` (Vite + React SPA) is the next piece.
+
+---
+
 ## Investigated — comparative benchmark re-run WITH the jitter metric (2026-08-12)
 
 Ran `bench:baseline` and `bench:oneencode` back to back, same synthetic 2560x1440@60 source, same ~60s duration, same rendition definitions, using the newly time-windowed `printJitterReport`. This closes the "still open" item from v0.5.0 below — and the result is **not the clean win it might sound like from the architecture alone**, reported plainly rather than spun:
