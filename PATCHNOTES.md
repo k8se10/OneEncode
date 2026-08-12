@@ -1,6 +1,25 @@
 # PATCHNOTES
 
-## v0.5.0 (in progress) — frame-pacing/jitter measurement, pipeline refactor
+## Investigated — comparative benchmark re-run WITH the jitter metric (2026-08-12)
+
+Ran `bench:baseline` and `bench:oneencode` back to back, same synthetic 2560x1440@60 source, same ~60s duration, same rendition definitions, using the newly time-windowed `printJitterReport`. This closes the "still open" item from v0.5.0 below — and the result is **not the clean win it might sound like from the architecture alone**, reported plainly rather than spun:
+
+| leg (end-output stage only) | design | mean fps | CoV (lower = steadier) |
+|---|---|---|---|
+| archive-1 | baseline | 62.4 | **0.049** |
+| archive-2 | baseline | 62.4 | **0.049** |
+| 720p-archive | baseline | 63.1 | **0.067** |
+| archive-1 | oneencode | 63.8 | **0.090** |
+| archive-2 | oneencode | 63.8 | **0.090** |
+| 720p-archive | oneencode | 63.8 | **0.090** |
+
+**At the actual delivered-output stage, this design showed HIGHER jitter (CoV ~0.090) than the naive baseline (CoV ~0.049-0.067) in this run** — roughly 60% worse by this metric, not better. Interestingly, the *rendition-encode* stage itself (`rendition-shared-1080p60`: CoV 0.045, `rendition-local-720p`: CoV 0.064) was comparable to or slightly better than baseline's direct-encode legs — so the redundant-encode-elimination isn't the problem. **The likely cause is the extra RTMP hop the rendition-dedup design introduces**: baseline is ingest → leg's own decode+encode → output (one hop); this design is ingest → decode/relay → rendition encode → rendition-relay publish → leg's stream-copy → output (more hops, more places for scheduling/buffering jitter to accumulate), even though total redundant CPU/GPU work is genuinely lower.
+
+**This is a real, unresolved finding, not yet a closed investigation**: only one run each was captured (no repeat-run noise floor established), and the actual mechanism (MediaMTX-imposed buffering? FFmpeg's own RTMP read buffering on the copy leg? something else?) hasn't been isolated. Until this is understood and addressed, **the rendition-dedup and single-decode architecture should be described as CPU/GPU-efficiency-correct and failure-isolation-correct, but NOT yet proven to reduce the frame-pacing/burstiness symptom this whole project exists to fix** — it may currently be making that specific symptom worse, not better, even while using less redundant compute. Flagged prominently in CLAUDE.md rather than left buried here.
+
+---
+
+## v0.5.0 — frame-pacing/jitter measurement, pipeline refactor
 
 ### Added
 - `src/legs/statsAnalysis.ts: computeJitterStats` — mean/stddev/coefficient-of-variation over a leg's fps sample series, closing the real methodology gap found via recovered planning context (drop=/dup= counters can't see frame-pacing burstiness, which was the original reported symptom). 5 unit tests, including one proving a bursty series (30,90,30,90) is distinguishable from a steady one (60,60,60,60) at the same mean.

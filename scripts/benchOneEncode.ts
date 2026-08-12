@@ -14,6 +14,7 @@ import { printJitterReport } from "./reportUtil.js";
  * run for a fair comparison.
  */
 async function main(): Promise<void> {
+  const startedAt = new Date();
   const { config, destinations } = loadConfig();
 
   console.log(`[bench-oneencode] starting the real single-decode/rendition-dedup pipeline for comparison...`);
@@ -26,7 +27,7 @@ async function main(): Promise<void> {
     shuttingDown = true;
     console.log(`\n[bench-oneencode] shutting down...`);
     await pipeline.stopAll();
-    printJitterReport("bench-oneencode", [...pipeline.legIds, ...pipeline.renditionLegIds]);
+    printJitterReport("bench-oneencode", [...pipeline.legIds, ...pipeline.renditionLegIds], startedAt);
     process.exit(0);
   };
   process.on("SIGINT", shutdown);

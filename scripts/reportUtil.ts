@@ -8,8 +8,8 @@ import { computeJitterStats } from "../src/legs/statsAnalysis.js";
  * side-by-side comparison instead of eyeballing raw JSONL — see CLAUDE.md §8's
  * note on why drop=/dup= counters alone aren't sufficient.
  */
-export function printJitterReport(label: string, legIds: string[]): void {
-  const samplesByLeg = readFpsSamplesForLegs(legIds);
+export function printJitterReport(label: string, legIds: string[], since: Date): void {
+  const samplesByLeg = readFpsSamplesForLegs(legIds, since);
   console.log(`\n[${label}] frame-pacing summary (fps variance across -stats samples, lower CoV = steadier):`);
   console.log(`${"legId".padEnd(28)}${"samples".padEnd(10)}${"mean fps".padEnd(12)}${"stddev".padEnd(10)}${"min".padEnd(8)}${"max".padEnd(8)}CoV`);
   for (const [legId, fpsSamples] of samplesByLeg) {

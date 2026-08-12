@@ -19,6 +19,7 @@ import { printJitterReport } from "./reportUtil.js";
  * against a real OBS source), then `npm run bench:baseline`.
  */
 async function main(): Promise<void> {
+  const startedAt = new Date();
   const { config } = loadConfig();
 
   console.log(`[bench-baseline] starting relay server (needed for the ingest listener only)...`);
@@ -62,7 +63,7 @@ async function main(): Promise<void> {
     console.log(`\n[bench-baseline] shutting down...`);
     await Promise.all(controllers.map((c) => c.stop()));
     stopRelayServer(relay);
-    printJitterReport("bench-baseline", legIds);
+    printJitterReport("bench-baseline", legIds, startedAt);
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
