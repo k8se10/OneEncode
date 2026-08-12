@@ -8,6 +8,7 @@ import { groupLegsByRendition, buildRenditionUrl } from "./rendition/group.js";
 import { startRenditionEncode } from "./rendition/renditionProcess.js";
 import { resolveOutputPath } from "./destinations/localFileDestination.js";
 import { resolveRtmpDestination } from "./destinations/rtmpDestination.js";
+import { loadProbedCeiling, NvencSessionTracker, selectEncoder, isNvencEncoder } from "./nvenc/sessionTracker.js";
 
 /**
  * Orchestrator entrypoint. Two-stage pipeline per CLAUDE.md architecture
@@ -38,6 +39,13 @@ async function main(): Promise<void> {
   await decodeRelay.ready;
   console.log(`[oneencode] decode/relay is producing frames — starting renditions`);
 
+  // NVENC concurrent-session tracking (CLAUDE.md architecture decision #4:
+  // never assume the ceiling — read the real probed value, or fall back to
+  // a conservative default with a loud warning if the probe hasn't run yet).
+  const { ceiling: nvencCeiling } = loadProbedCeiling();
+  const nvencTracker = new NvencSessionTracker(nvencCeiling);
+  if (isNvencEncoder(config.relay.encoder)) nvencTracker.reserve(); // the relay's own encode reserves a slot too
+
   const legsByRendition = groupLegsByRendition(config.legs);
   const renditionSupervisors: LegSupervisor[] = [];
   const legSupervisors: LegSupervisor[] = [];
@@ -49,7 +57,7 @@ async function main(): Promise<void> {
       // a leg referencing an unknown renditionId before main() ever runs.
       throw new Error(`Internal error: no rendition found for id "${renditionId}"`);
     }
-    const encoder = rendition.encoderPreference[0];
+    const encoder = selectEncoder(`rendition-${renditionId}`, rendition.encoderPreference, nvencTracker);
     console.log(
       `[oneencode] rendition "${renditionId}": ${legsForRendition.length} leg(s) sharing this encode ` +
         `(${legsForRendition.map((l) => l.id).join(", ")})`,
