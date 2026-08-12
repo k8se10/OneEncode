@@ -13,6 +13,9 @@
     "bench:baseline": "tsx scripts/benchBaseline.ts",
     "bench:oneencode": "tsx scripts/benchOneEncode.ts",
     "gen:testsource": "tsx scripts/genTestSource.ts",
+    "investigate:jitter": "tsx scripts/jitterHopIsolation.ts",
+    "investigate:jitter-fpsmode": "tsx scripts/jitterFpsModeTest.ts",
+    "investigate:jitter-encoder": "tsx scripts/jitterEncoderTest.ts",
     "web:install": "cd web && npm install",
     "web:build": "cd web && npm run build",
     "web:dev": "cd web && npm run dev"

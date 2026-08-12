@@ -1,5 +1,21 @@
 # PATCHNOTES
 
+## Investigated — jitter regression (task #24): root cause narrowed to live re-encode of an already-relayed stream; a third fix (`-fps_mode cfr`) tried and rejected (2026-08-13)
+
+Continuing from the entry directly below (two candidate fixes already rejected: `nobuffer`/`low_delay`, `writeQueueSize` both directions). Built three new isolation tools (`scripts/jitterHopIsolation.ts`, `scripts/jitterFpsModeTest.ts`, `scripts/jitterEncoderTest.ts`, all now permanent — `npm run investigate:jitter[-fpsmode|-encoder]`) to stop guessing at the architecture level and directly measure which hop introduces the jitter.
+
+**1. Hop isolation, via zero-encode `-c copy` taps at each stage (ingest / post-relay / post-rendition) simultaneously.** In this run all three taps read back essentially the same CoV (≈0.028), including the raw ingest tap itself — meaning a pure remux of the live ingest is not perfectly uniform either, and neither encode hop measurably added jitter on top of what a plain copy already showed. This didn't match the earlier 0.0000-vs-0.0740 finding, which was the first sign the effect isn't simply "more hops = more jitter" in a way a copy tap can see — copy-based taps don't re-time anything, so they can only reveal jitter already baked into arrival timing, not jitter an encoder itself introduces.
+
+**2. Reproduced the official 0.0740 finding in a minimal, single-rendition-off-the-live-relay setup** (previously only ever measured via the full multi-leg pipeline) — confirms the earlier finding is real and not an artifact of the specific benchmark script. In the same run, a second concurrent rendition encoder with `-fps_mode cfr` explicitly forced scored *worse*, not better (0.0771 vs 0.0740), and introduced actual frame duplication (`dup=56` throughout, a duplicated frame roughly every second) — the forced-CFR frames still weren't evenly spaced (max delta 0.033s, a full doubled frame gap). **`-fps_mode cfr` is ruled out as a fix** — third candidate rejected.
+
+**3. Tested whether this is NVENC-specific** by re-running the same single-rendition-off-the-live-relay setup with `libx264` (CPU) instead. Still elevated — 0.0598 CoV, roughly 8x the copy-tap floor — meaning **this is not an NVENC real-time session-pacing quirk**; a completely different encoder backend shows the same qualitative effect, just at a somewhat lower magnitude.
+
+**4. Ruled out raw GPU/NVENC session-count contention as the mechanism.** The original baseline benchmark runs 2 concurrent NVENC sessions (`local-archive-1` + `local-archive-2`, both independently decoding the *original* ingest, no relay) and still measures ground-truth CoV≈0.0000 — near-perfect. A *single* rendition-stage encode session (regardless of encoder) reading from the relay already shows the full jitter. So contention/session-count isn't the differentiator — hop distance from the true origin is.
+
+**Sharper characterization of the mechanism, still not a full explanation:** a live, real-time re-encode of a stream that itself came from another live ffmpeg process (the relay) measurably amplifies frame-pacing jitter in its own output, across at least two different encoder backends — while a live re-encode of the *original* true-origin ingest does not, even under comparable or higher concurrent session load. The remaining open question is *why* ffmpeg's live encode path treats these two input sources differently at the timestamp-generation level — that would need either instrumenting ffmpeg itself or testing further input-side variables (e.g. does normalizing the relay's own output timestamps before republishing help?), neither attempted yet. **Task #24 stays open** — three candidate fixes now rejected with real data (`nobuffer`/`low_delay`, `writeQueueSize`, `-fps_mode cfr`), but the root cause is meaningfully narrower than before: it's an encoder-agnostic effect of re-encoding a relayed live stream specifically, not a tunable buffer/pacing flag, not NVENC-specific, and not raw contention.
+
+---
+
 ## Investigated — jitter regression (task #24): writeQueueSize ruled out both directions; ground-truth PTS cross-check makes the finding starker, not weaker (2026-08-13)
 
 Continuing from the earlier "Investigated" entries below (`nobuffer`/`low_delay` tried and rejected — made things dramatically worse). Two more real steps taken:
