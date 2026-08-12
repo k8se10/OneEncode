@@ -1,13 +1,25 @@
 # PATCHNOTES
 
-## v0.1.0 (in progress) — Phase 1: single-decode/multi-leg mechanism
+## v0.2.0 (in progress) — Phase 4: health/restart supervision
+
+### Added
+- `src/health/monitor.ts: superviseLeg` — full leg lifecycle supervisor superseding `legProcess.ts`'s narrower `spawnLegWithRetry`. Owns spawn, initial-connection-race retry, ongoing crash restart with exponential backoff (`computeBackoffMs`), a watchdog restart if no stats sample arrives for 20s while the process is still alive (some ffmpeg failure modes hang rather than exit), and a rolling-hour restart cap (`isOverRestartCap`) past which a leg is marked `failed` and surfaced loudly instead of looping forever. Each leg's supervisor state (attempt count, backoff, restart history) is fully independent of every other leg's.
+- `src/index.ts`, `src/ingest/decodeRelay.ts`, and `scripts/benchBaseline.ts` all now use `superviseLeg` in place of the old retry-only wrapper. Local-file legs now regenerate their timestamped output filename on every restart (via a `buildArgv` closure re-invoked per attempt) rather than reusing a precomputed path, so a restart can't reopen/overwrite a prior partial file.
+- 7 new unit tests for the two pure decision functions (`computeBackoffMs`, `isOverRestartCap`) — 18 tests total now passing.
+
+### Verified live
+- Killed one running leg's ffmpeg process directly (`local-720p`, mid-stream) while the relay and two other legs kept running. Confirmed via the structured log: only `local-720p` recorded a `leg_exit` (`exitCode: 1`, uptime matching the kill) — `relay`, `local-1080p`, and `local-source-res` recorded zero additional exits in that window and kept producing `drop=0` stats samples throughout. The killed leg logged `leg_restart` with backoff and resumed normal stats output afterward. This is the concrete failure-isolation proof the project's own rules require (CLAUDE.md §5/§8) — not just assumed from the architecture.
+
+---
+
+## v0.1.0 — Phase 1: single-decode/multi-leg mechanism
 
 ### Added
 - Node.js/TypeScript orchestrator skeleton (`src/index.ts`) — loads config, starts the local MediaMTX relay, starts the single decode/relay FFmpeg process, starts one FFmpeg process per enabled destination leg, logs structured JSON-Lines events, shuts down cleanly on SIGINT/SIGTERM.
 - Config schema + loader (`src/config/`) — zod-validated YAML leg configuration, gitignored real config (`config/legs.local.yaml`, `config/secrets.local.yaml`) with committed placeholder templates (`config/legs.example.yaml`, `config/secrets.local.example.yaml`).
 - FFmpeg argv builder (`src/legs/argvBuilder.ts`) — builds per-leg and relay FFmpeg command lines as argument arrays (never shell strings), covering NVENC/AMF/libx264 rate-control variants.
 - FFmpeg `-stats` parser (`src/legs/statsParser.ts`) and structured logger (`src/logging/logger.ts`) with mandatory secret redaction (`src/logging/redact.ts`) applied to every log write.
-- Retry-until-ready process wrapper (`src/legs/legProcess.ts: spawnLegWithRetry`) — used by both the decode/relay process and every destination leg, to tolerate real startup ordering (source, relay, and legs may become available in any order).
+- Retry-until-ready process wrapper (originally `src/legs/legProcess.ts: spawnLegWithRetry`, since superseded by the full supervisor in v0.2.0 below) — used by both the decode/relay process and every destination leg, to tolerate real startup ordering (source, relay, and legs may become available in any order).
 - MediaMTX (v1.20.0) vendored as the local relay server, with a minimal RTMP-only config (`config/mediamtx.yml`).
 - Synthetic 2560x1440@60 test source generator (`scripts/genTestSource.ts`) and a naive-baseline benchmark script (`scripts/benchBaseline.ts`) for before/after comparison.
 - 11 unit tests covering argv construction, stats parsing, and secret redaction.

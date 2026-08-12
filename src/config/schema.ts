@@ -77,3 +77,4 @@ export const rootConfigSchema = z.object({
 
 export type RootConfig = z.infer<typeof rootConfigSchema>;
 export type EncoderName = z.infer<typeof encoderName>;
+export type RestartPolicy = z.infer<typeof restartPolicySchema>;

@@ -3,18 +3,15 @@ import { logEvent } from "./logging/logger.js";
 import { startRelayServer, stopRelayServer, type RelayServerHandle } from "./ingest/relayServer.js";
 import { startDecodeRelay, type DecodeRelayController } from "./ingest/decodeRelay.js";
 import { buildLegArgv } from "./legs/argvBuilder.js";
-import { spawnLegWithRetry, type RetryingLegController } from "./legs/legProcess.js";
+import { superviseLeg, type LegSupervisor } from "./health/monitor.js";
 import { resolveOutputPath } from "./destinations/localFileDestination.js";
 import { resolveRtmpDestination } from "./destinations/rtmpDestination.js";
 
 /**
- * Phase 1 minimal orchestrator: spawn the relay + decode/relay + every
- * enabled leg, log stats, and shut everything down cleanly on Ctrl+C.
- *
- * No restart/backoff/health state machine yet — that's Phase 4
- * (src/health/monitor.ts, not built yet). This exists purely to prove the
- * single-decode/multi-leg mechanism and produce real drop=/dup= numbers to
- * compare against the naive baseline (scripts/benchBaseline.ts).
+ * Orchestrator entrypoint: spawn the relay + decode/relay + every enabled
+ * leg (each fully supervised — restart with backoff, watchdog, rolling-hour
+ * failure cap, see health/monitor.ts), log stats, and shut everything down
+ * cleanly on Ctrl+C.
  */
 async function main(): Promise<void> {
   let loaded: ReturnType<typeof loadConfig>;
@@ -38,12 +35,15 @@ async function main(): Promise<void> {
   await decodeRelay.ready;
   console.log(`[oneencode] decode/relay is producing frames — starting destination legs`);
 
-  const legControllers: RetryingLegController[] = [];
+  const legSupervisors: LegSupervisor[] = [];
   for (const leg of config.legs) {
     if (!leg.enabled) continue;
 
     const encoder = leg.encoderPreference[0];
-    const argv =
+    // buildArgv is re-invoked on every (re)start, not precomputed once — a
+    // local-file leg needs a fresh timestamped output path per attempt so a
+    // restart doesn't reopen/overwrite a prior partial file.
+    const buildArgv = () =>
       leg.type === "local-file"
         ? buildLegArgv({ leg, relayUrl: config.relay.url, encoder, resolvedOutputPath: resolveOutputPath(leg) })
         : buildLegArgv({
@@ -53,20 +53,19 @@ async function main(): Promise<void> {
             destinationUrl: resolveRtmpDestination(leg, destinations),
           });
 
-    // spawnLegWithRetry (not a bare spawn) — a leg can otherwise lose the
-    // startup race against the decode/relay process's own publish becoming
-    // visible to MediaMTX, confirmed live during Phase 1 testing.
-    legControllers.push(spawnLegWithRetry(leg.id, argv, encoder));
+    legSupervisors.push(
+      superviseLeg({ legId: leg.id, encoderLabel: encoder, buildArgv, restartPolicy: config.restartPolicy }),
+    );
   }
 
-  console.log(`[oneencode] ${legControllers.length} leg(s) starting. Press Ctrl+C to stop.`);
+  console.log(`[oneencode] ${legSupervisors.length} leg(s) starting. Press Ctrl+C to stop.`);
 
   let shuttingDown = false;
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`\n[oneencode] shutting down...`);
-    await Promise.all(legControllers.map((c) => c.stop()));
+    await Promise.all(legSupervisors.map((s) => s.stop()));
     await decodeRelay.stop();
     stopRelayServer(relay);
     process.exit(0);

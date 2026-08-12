@@ -1,7 +1,7 @@
 import { loadConfig } from "../src/config/load.js";
 import { startRelayServer, stopRelayServer } from "../src/ingest/relayServer.js";
 import { buildLegArgv } from "../src/legs/argvBuilder.js";
-import { spawnLegWithRetry, type RetryingLegController } from "../src/legs/legProcess.js";
+import { superviseLeg, type LegSupervisor } from "../src/health/monitor.js";
 import { resolveOutputPath } from "../src/destinations/localFileDestination.js";
 
 /**
@@ -28,7 +28,7 @@ async function main(): Promise<void> {
       `processes, each decoding ${config.ingest.listenUrl} separately — this is today's naive approach.`,
   );
 
-  const controllers: RetryingLegController[] = [];
+  const controllers: LegSupervisor[] = [];
   for (const leg of config.legs) {
     if (!leg.enabled) continue;
     if (leg.type !== "local-file") {
@@ -38,13 +38,16 @@ async function main(): Promise<void> {
     const encoder = leg.encoderPreference[0];
     // Deliberately points at the ORIGINAL ingest, not the relay — this is
     // the naive "N independent decodes of the same source" baseline.
-    const argv = buildLegArgv({
-      leg,
-      relayUrl: config.ingest.listenUrl,
-      encoder,
-      resolvedOutputPath: resolveOutputPath({ ...leg, filenamePattern: `baseline_${leg.filenamePattern}` }),
-    });
-    controllers.push(spawnLegWithRetry(`baseline-${leg.id}`, argv, encoder));
+    const buildArgv = () =>
+      buildLegArgv({
+        leg,
+        relayUrl: config.ingest.listenUrl,
+        encoder,
+        resolvedOutputPath: resolveOutputPath({ ...leg, filenamePattern: `baseline_${leg.filenamePattern}` }),
+      });
+    controllers.push(
+      superviseLeg({ legId: `baseline-${leg.id}`, encoderLabel: encoder, buildArgv, restartPolicy: config.restartPolicy }),
+    );
   }
 
   console.log(`[bench-baseline] ${controllers.length} independent leg(s) starting. Press Ctrl+C to stop.`);

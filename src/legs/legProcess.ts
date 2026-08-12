@@ -16,8 +16,11 @@ export interface LegProcessHandle {
  * Spawns one ffmpeg leg (or the decode/relay process, using the same
  * mechanics) and wires stderr stats parsing + structured logging.
  *
- * Phase 1 scope: spawn + observe only. Restart/backoff/health-state-machine
- * logic is Phase 4 (see health/monitor.ts, not yet built).
+ * This is the single-attempt primitive — one spawn, one exit. Retry-until-
+ * ready, ongoing crash restart with backoff, and the rolling-hour failure
+ * cap all live one layer up in health/monitor.ts's superviseLeg(), which
+ * calls this repeatedly as needed. Don't reach for this directly outside
+ * that supervisor unless you deliberately want a single, non-retried spawn.
  */
 export function spawnLegProcess(
   legId: string,
@@ -81,74 +84,6 @@ export function spawnLegProcess(
   });
 
   return { legId, process: child, startedAt, exited };
-}
-
-export interface RetryingLegController {
-  /** Resolves once the process has produced its first real stats sample. */
-  ready: Promise<void>;
-  stop(): Promise<void>;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Spawns a leg (or the decode/relay process) and retries with backoff if it
- * exits before producing its first stats sample — covering the ordinary
- * startup race where this leg's own upstream (the ingest source, or the
- * decode/relay's own publish to MediaMTX) isn't live yet. Confirmed live
- * during Phase 1 testing: MediaMTX rejects a reader immediately ("no stream
- * is available") rather than blocking until a publisher appears, so without
- * this every leg would need its human-in-the-loop start ordering to be
- * exactly right, which isn't realistic.
- *
- * This is deliberately narrow — retry only applies to "never got going in
- * the first place." Once a leg is running, this does not restart it if it
- * later crashes; that full health/restart state machine is Phase 4
- * (health/monitor.ts, not built yet).
- */
-export function spawnLegWithRetry(legId: string, argv: string[], encoderLabel: string): RetryingLegController {
-  let stopped = false;
-  let sawFirstSample = false;
-  let currentHandle: LegProcessHandle | undefined;
-  let resolveReady: () => void;
-  const ready = new Promise<void>((resolve) => {
-    resolveReady = resolve;
-  });
-
-  async function attemptLoop(): Promise<void> {
-    let attempt = 0;
-    while (!stopped && !sawFirstSample) {
-      attempt++;
-      const handle = spawnLegProcess(legId, argv, encoderLabel, () => {
-        if (!sawFirstSample) {
-          sawFirstSample = true;
-          resolveReady();
-        }
-      });
-      currentHandle = handle;
-      await handle.exited;
-
-      if (stopped || sawFirstSample) return;
-
-      const waitMs = Math.min(2000 * attempt, 10000);
-      if (attempt === 1 || attempt % 5 === 0) {
-        console.log(`[oneencode] leg "${legId}": not producing frames yet (attempt ${attempt}) — retrying in ${waitMs}ms`);
-      }
-      await delay(waitMs);
-    }
-  }
-
-  void attemptLoop();
-
-  return {
-    ready,
-    stop: async () => {
-      stopped = true;
-      if (currentHandle) await stopLegProcess(currentHandle);
-    },
-  };
 }
 
 /**
