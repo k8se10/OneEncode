@@ -1,0 +1,89 @@
+# Reference table of well-known platforms' PUBLISHED recommended streaming
+# settings — public documentation data, not a secret, committed (not
+# gitignored). See CLAUDE.md architecture decision #10.
+#
+# PURPOSE: seeds sensible DEFAULT values for a brand-new rendition when
+# a user picks a known platform (via config or, once built, the dashboard).
+# Hard rule: this NEVER overrides a value the user has already set — see
+# decision #10's own wording. Not yet wired into the config loader or a UI
+# (that lands when Phase 2/5/6 actually need it) — this file is the
+# reference data itself, built ahead of that wiring per the plan.
+#
+# HONESTY NOTE (important): these values were compiled from general
+# knowledge of each platform's publicly documented streaming/encoder
+# guidance, not fetched live from each platform's current docs at write
+# time. Platform recommendations DO change. Treat every entry as a
+# reasonable starting point, not a guaranteed-current fact — re-verify
+# against the platform's own current documentation before relying on this
+# for a real broadcast, especially if `sourcedDate` below is more than a
+# few months old. `confidence: high` entries are well-documented by the
+# platform itself; `confidence: medium` entries are inferred from less
+# detailed/less official public guidance.
+
+platforms:
+  - platformName: Twitch
+    sourcedDate: "2026-08-13"
+    confidence: high
+    sourceNote: "Twitch's own publicly documented broadcast/encoder guidelines"
+    recommended:
+      resolution: { width: 1920, height: 1080 }
+      fps: 60
+      videoBitrateKbps: 6000
+      audioBitrateKbps: 160
+      keyframeIntervalSec: 2
+    notes: >
+      Twitch's own guidance caps recommended bitrate around 6000 kbps for
+      most broadcasters regardless of resolution/fps combination; some
+      partner tiers may be authorized for higher. Uses a single fixed
+      bitrate here, matching this project's config shape.
+
+  - platformName: YouTube Live
+    sourcedDate: "2026-08-13"
+    confidence: high
+    sourceNote: "YouTube Live Streaming's own publicly documented recommended encoder settings table"
+    recommended:
+      resolution: { width: 1920, height: 1080 }
+      fps: 60
+      videoBitrateKbps: 9000
+      audioBitrateKbps: 128
+      keyframeIntervalSec: 2
+    notes: >
+      YouTube publishes a bitrate RANGE per resolution/framerate combination
+      (e.g. roughly 9000-18000 kbps at 1080p60) — this entry uses the low
+      end of that range as a conservative single-value default, since this
+      project's rendition schema models one fixed bitrate, not a range.
+      Confirm against YouTube's current published table for the exact
+      resolution/fps you're using before relying on this.
+
+  - platformName: Kick
+    sourcedDate: "2026-08-13"
+    confidence: medium
+    sourceNote: "Kick's public creator/support documentation, less granular than Twitch/YouTube's own guides"
+    recommended:
+      resolution: { width: 1920, height: 1080 }
+      fps: 60
+      videoBitrateKbps: 8000
+      audioBitrateKbps: 160
+      keyframeIntervalSec: 2
+    notes: >
+      Kick's own published guidance is less detailed than Twitch/YouTube's.
+      This is a reasonable starting point inferred from their general
+      creator documentation, held with lower confidence than the
+      Twitch/YouTube entries above — verify directly with Kick before
+      relying on this for a real broadcast.
+
+  - platformName: Facebook Live
+    sourcedDate: "2026-08-13"
+    confidence: high
+    sourceNote: "Meta's publicly documented Facebook Live producer/API recommended encoder settings"
+    recommended:
+      resolution: { width: 1280, height: 720 }
+      fps: 30
+      videoBitrateKbps: 4000
+      audioBitrateKbps: 128
+      keyframeIntervalSec: 2
+    notes: >
+      Facebook's own guidance is generally more conservative than
+      Twitch/YouTube's, historically favoring 720p30 as a safe baseline.
+      Higher resolutions/framerates are supported with correspondingly
+      higher recommended bitrates not captured in this single default entry.

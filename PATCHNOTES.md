@@ -1,6 +1,22 @@
 # PATCHNOTES
 
-## v0.3.0 (in progress) — Phase 3.5: rendition-level dedup
+## v0.4.0 (in progress) — NVENC probe, platform profiles, recovered planning context
+
+### Added
+- `src/nvenc/probe.ts` (`npm run probe:nvenc`) — empirically probes this machine's real concurrent NVENC session ceiling by holding synthetic `h264_nvenc` encodes open one at a time until a launch fails, writing the result to gitignored `state/nvenc-ceiling.json`. **Run against this real machine (RTX 2080 Ti, current driver)**: no failure was hit up to 16 concurrent sessions — this driver has no observable NVENC session limit at that count, well above any realistic leg count for this project. `ceilingIsExact: false` in the state file reflects that the true ceiling (if any) is higher than 16, not that 16 is confirmed as the hard limit.
+- `config/platformProfiles.yaml` — committed reference table of Twitch/YouTube Live/Kick/Facebook Live's published recommended encode settings, per CLAUDE.md architecture decision #10. Not yet wired into the config loader or a UI (lands with Phase 2/6). Each entry carries a `confidence` rating and `sourcedDate` — compiled from general knowledge of each platform's public docs, not a live fetch; flagged explicitly in the file's own header as needing periodic re-verification.
+
+### Docs — recovered planning context folded into CLAUDE.md/AGENTS.md
+A prior ChatGPT planning conversation (read in full via a forked sub-agent, 2026-08-13) turned up decisions and diagnostic history not yet captured anywhere in this repo:
+- **Dual-PC deployment is the primary target**, not single-PC (gaming PC runs only game/capture; a separate streaming PC runs OBS + OneEncode, keeping all transcode load off the machine actually running the game). Single-PC, which is what this project's own development/testing has used so far, is a supported fallback — flagged so Phase 1's test results aren't assumed to transfer directly without saying so.
+- **Explicit success-criteria priority order locked**: no dropped frames > game/OBS unaffected > every platform gets its required format > stable/consistent output (a steady 2s beats 2s→2s→6s→2s even at similar average) > low latency > minimum latency. ~3s end-to-end latency is an accepted cost of consistency. The actual bar: **the viewer must never notice.**
+- **Twitch designated as the first real platform** for Phase 2 — described as the fussiest of the majors, treated as the reference case rather than whichever is easiest to wire up first.
+- **Real diagnostic history surfaced a gap in Phase 1's own benchmark methodology**: the original symptom (before this project existed) was frame-pacing/burstiness — OBS's average FPS didn't match visibly smooth playback, and capping framerate (not resolution) was what actually helped. `drop=`/`dup=` counters, Phase 1's primary metric, measure counts, not timing consistency, and can show `drop=0` on a run that still stutters. Documented in CLAUDE.md §8 as a known, not-yet-closed gap — a frame-interval-variance/jitter metric is needed before the fix can be called fully proven.
+- **A future architecture direction was captured** (not built, not yet scheduled to a phase): a shared upscale stage before the rendition split (only upscale when source < target, shared across renditions that need it — same "decode once, branch many" family as rendition dedup), plus workload staggering and small deliberate buffering as a delivery "shock absorber" in service of the consistency-over-latency priority above.
+
+---
+
+## v0.3.0 — Phase 3.5: rendition-level dedup
 
 ### Added
 - Config schema split: `renditions` (what to encode — resolution/fps/bitrate/codec) are now separate, named, reusable objects; `legs` (where it goes — a platform push or local file) reference a rendition by `renditionId` instead of inlining their own encode spec. Schema-level validation rejects a leg referencing an unknown rendition, and duplicate rendition/leg ids, before anything starts.
