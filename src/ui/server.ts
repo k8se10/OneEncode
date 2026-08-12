@@ -6,6 +6,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type { RunningPipeline } from "../pipeline.js";
 import { loadOrCreateUiToken, requireUiToken, isValidUiTokenQuery } from "./auth.js";
 import { createApiRouter } from "./api.js";
+import { createConfigApiRouter } from "./configApi.js";
 import { LiveStateTracker } from "./liveState.js";
 
 const WEB_DIST_DIR = path.resolve(process.cwd(), "web/dist");
@@ -39,6 +40,7 @@ export function startUiServer(pipeline: RunningPipeline, port = 4771): UiServerH
   app.use(express.json());
 
   app.use("/api", requireUiToken(token), createApiRouter(pipeline, liveState));
+  app.use("/api/config", requireUiToken(token), createConfigApiRouter());
 
   if (fs.existsSync(WEB_DIST_DIR)) {
     app.use(express.static(WEB_DIST_DIR));

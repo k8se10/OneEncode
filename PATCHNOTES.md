@@ -1,5 +1,25 @@
 # PATCHNOTES
 
+## v0.9.0 — add/edit/remove legs through the dashboard, live-verified
+
+Closes the one documented gap from v0.7.0's Phase 6 dashboard: config changes required hand-editing YAML + a restart. That restart requirement is unchanged (no hot-reload), but the hand-editing is no longer required.
+
+### Added
+- `src/ui/configApi.ts` — full CRUD REST API for renditions and legs, mounted at `/api/config` behind the same token gate as the rest of the dashboard. Every write is validated through the exact same `rootConfigSchema`/`legSchema`/`renditionSchema` (`src/config/schema.ts`) the orchestrator itself loads with, so a config the API accepts is guaranteed to be one the orchestrator will actually start with. Deleting a rendition still referenced by a leg is refused with a clear error naming the dependent leg(s), not a silent orphan reference.
+- Secrets are write-only through the whole stack: a leg write accepts an optional `secretValue`, written straight to `config/secrets.local.yaml`, never returned by any GET response — the API only ever reports `secretSet: true/false`. Deleting an rtmp-push leg deletes its associated secret too.
+- `web/src/ConfigManager.tsx` + `web/src/configApi.ts` — a "Configure" tab alongside the existing "Monitor" tab, with add/edit/delete forms for both renditions and legs. Secret fields are password-style inputs, never pre-filled with a real value on edit ("leave blank to keep as-is").
+- Every successful config write shows a persistent "Config saved — restart required, no hot-reload yet" notice banner in the dashboard, so the restart requirement is visible, not a silent gap.
+- `encoderName`/`renditionSchema` widened from module-private to exported in `src/config/schema.ts`, needed by the new config API for validation and to populate the frontend's encoder-selection options.
+- 9 new backend unit tests (`tests/ui/configApi.test.ts`) — notably, `node:fs` is fully mocked so these tests never touch the real `config/*.yaml` on disk (this project's dev config is shared with whatever else might be running against it).
+
+### Verified live (real browser, real file I/O this time — not mocked)
+- Logged into the dashboard, opened the new Configure tab: both existing renditions and legs rendered correctly in tables.
+- Created a new rendition (`test-540p`, 960x540) through the form: it appeared in the table immediately, the "restart required" notice appeared, and `config/legs.local.yaml` on disk was confirmed to contain the exact new entry, correctly formatted YAML.
+- Deleted it through the UI: table and on-disk file both returned to their original state.
+- Zero console errors throughout. This also incidentally confirmed the Express route-mounting order (`/api` then `/api/config`) works correctly — Express's router fall-through behavior does the right thing here, worth knowing given this project already found one real Express 5 routing surprise in v0.7.0.
+
+---
+
 ## v0.8.0 — rtmp-push code path validated end-to-end; real relay-encoder bug found and fixed
 
 Context: three parallel background agents were set to work on the open items from v0.7.0 (jitter root cause, add/edit/remove-leg UI, de-risking Phase 2 without real credentials). All three hit the session's account-level API rate limit mid-task and were cut off before finishing. This entry covers picking up and completing the Phase 2 de-risking work; the other two are covered separately below once reviewed and completed.

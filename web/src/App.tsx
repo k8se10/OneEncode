@@ -14,6 +14,7 @@ import {
   type LegStats,
   type RenditionRow,
 } from "./api";
+import { ConfigManager } from "./ConfigManager";
 import "./App.css";
 
 function resolutionLabel(resolution: "source" | { width: number; height: number }): string {
@@ -76,10 +77,12 @@ function LoginGate({ onAuthed }: { onAuthed: (token: string) => void }) {
 
 function App() {
   const [token, setToken] = useState<string | null>(() => getStoredToken());
+  const [tab, setTab] = useState<"monitor" | "configure">("monitor");
   const [legs, setLegs] = useState<LegRow[]>([]);
   const [renditions, setRenditions] = useState<RenditionRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const [restartNotice, setRestartNotice] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -148,15 +151,33 @@ function App() {
     <div className="app">
       <header>
         <h1>OneEncode Dashboard</h1>
-        <p className="muted">
-          Live monitoring + controls only — adding/editing/removing legs isn't built yet; hand-edit{" "}
-          <code>config/legs.local.yaml</code> and restart the orchestrator for that.
-        </p>
+        <div className="tabs">
+          <button className={tab === "monitor" ? "tab active" : "tab"} onClick={() => setTab("monitor")}>
+            Monitor
+          </button>
+          <button className={tab === "configure" ? "tab active" : "tab"} onClick={() => setTab("configure")}>
+            Configure
+          </button>
+        </div>
       </header>
+
+      {restartNotice && (
+        <div className="notice-banner">
+          Config saved. Changes only take effect after the orchestrator is restarted — no hot-reload yet.{" "}
+          <button className="link-button" onClick={() => setRestartNotice(false)}>
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {error && <div className="error-banner">{error}</div>}
 
-      {renditions.map((rendition) => (
+      {tab === "configure" ? (
+        <ConfigManager token={token} onConfigChanged={() => setRestartNotice(true)} />
+      ) : (
+        <>
+          {renditions.length === 0 && <p className="muted">No renditions configured yet — switch to the Configure tab to add one.</p>}
+          {renditions.map((rendition) => (
         <section key={rendition.id} className="rendition-card">
           <div className="rendition-header">
             <h2>{rendition.id}</h2>
@@ -217,7 +238,9 @@ function App() {
             </tbody>
           </table>
         </section>
-      ))}
+          ))}
+        </>
+      )}
     </div>
   );
 }
