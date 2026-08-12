@@ -42,7 +42,8 @@ export function startUiServer(pipeline: RunningPipeline, port = 4771): UiServerH
 
   if (fs.existsSync(WEB_DIST_DIR)) {
     app.use(express.static(WEB_DIST_DIR));
-    app.get("*", (_req, res) => res.sendFile(path.join(WEB_DIST_DIR, "index.html")));
+    // Express 5 (path-to-regexp v7+) requires a named wildcard — bare "*" throws at startup.
+    app.get("/*splat", (_req, res) => res.sendFile(path.join(WEB_DIST_DIR, "index.html")));
   } else {
     app.get("/", (_req, res) => {
       res.type("text/plain").send("OneEncode dashboard: frontend not built yet. Run `npm run web:build` in web/.");

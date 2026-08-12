@@ -1,6 +1,6 @@
 {
   "name": "oneencode",
-  "version": "0.1.0",
+  "version": "0.7.0",
   "private": true,
   "description": "One-encode-to-many-transcode local restreaming pipeline",
   "type": "module",
@@ -12,7 +12,10 @@
     "probe:nvenc": "tsx src/nvenc/probe.ts",
     "bench:baseline": "tsx scripts/benchBaseline.ts",
     "bench:oneencode": "tsx scripts/benchOneEncode.ts",
-    "gen:testsource": "tsx scripts/genTestSource.ts"
+    "gen:testsource": "tsx scripts/genTestSource.ts",
+    "web:install": "cd web && npm install",
+    "web:build": "cd web && npm run build",
+    "web:dev": "cd web && npm run dev"
   },
   "dependencies": {
     "express": "^5.2.1",

@@ -1,6 +1,27 @@
 # PATCHNOTES
 
-## v0.6.0 (in progress) — Phase 6 dashboard backend
+## v0.7.0 — Phase 6 dashboard frontend, live-verified in a real browser
+
+### Added
+- `web/` — Vite + React SPA per CLAUDE.md architecture decision #8. Token login gate (paste from `state/ui-token.txt`, cached in `localStorage`), a card per rendition (resolution/fps/bitrate/encoder-preference chain, live stats, Stop/Restart), a table of that rendition's dependent legs with color-coded state badges and their own Stop/Restart controls. Live data via WebSocket push with a 5s REST poll fallback.
+- Root `package.json`: `web:install`/`web:build`/`web:dev` convenience scripts. `web:dev` proxies `/api` and `/ws` to the real backend (port 4771) for hot-reload iteration; production always serves the built static bundle directly from `src/ui/server.ts`.
+- Removed unused default Vite scaffold assets (`hero.png`, `react.svg`, `vite.svg`, `icons.svg`) that nothing referenced.
+
+### Fixed
+- **Real startup-crashing bug, found via live testing**: Express 5's router (path-to-regexp v7+) rejects a bare `"*"` wildcard route — `src/ui/server.ts`'s SPA-fallback route used that syntax (`app.get("*", ...)`) and crashed the entire orchestrator at startup with `PathError: Missing parameter name at index 1: *` the moment `web/dist` actually existed. This had been silently unreachable in all of v0.6.0's "verified live" backend testing, because that testing happened before the frontend was built, so `web/dist` didn't exist yet and the server took the other branch. Fixed to the named-wildcard form Express 5 requires (`"/*splat"`) and re-verified.
+
+### Verified live (real browser, not just curl)
+- Navigated to `http://127.0.0.1:4771/` in an actual Chrome tab: login gate rendered correctly, entering the real token from `state/ui-token.txt` authenticated successfully.
+- Dashboard rendered real live data: both renditions with correct resolution/fps/bitrate/encoder chains, all three legs correctly grouped under their rendition, live-updating stats matching what the orchestrator's own log showed.
+- Clicked "Stop" on `local-720p-archive`'s row: its badge updated to `STOPPED` within seconds, no page reload, no console errors (`read_console_messages` confirmed clean).
+- Sibling legs/renditions (which had independently hit their restart cap after the test source ended, showing `FAILED`) were correctly unaffected by the stop click — the UI accurately reflects true backend state per leg, not a shared/aggregated status.
+
+### Still open (per plan Phase 6)
+- Add/edit/remove destination legs through the UI is not built — see v0.6.0 below and CLAUDE.md architecture decision #8 for the honest scope note. Config changes still require hand-editing YAML plus a restart.
+
+---
+
+## v0.6.0 — Phase 6 dashboard backend
 
 ### Added
 - `src/ui/server.ts` — Express + WebSocket server, bound to `127.0.0.1` only, serving the REST API and (once built) the static frontend from `web/dist`.

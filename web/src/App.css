@@ -1,0 +1,168 @@
+:root {
+  color-scheme: dark;
+  --bg: #121417;
+  --panel: #1b1e23;
+  --border: #2a2e35;
+  --text: #e6e8eb;
+  --muted: #8a919c;
+  --accent: #4f8cff;
+  --warn: #e0a030;
+  --running: #3fb950;
+  --stopped: #6e7681;
+  --failed: #f85149;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+header h1 {
+  margin-bottom: 4px;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.9em;
+}
+
+code {
+  background: var(--panel);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.login-gate {
+  max-width: 420px;
+  margin: 15vh auto;
+  padding: 24px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.login-gate input {
+  width: 100%;
+  padding: 8px;
+  margin: 12px 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+}
+
+.login-gate button,
+.controls button {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.login-gate button:disabled,
+.controls button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.error,
+.error-banner {
+  color: var(--failed);
+}
+
+.error-banner {
+  background: rgba(248, 81, 73, 0.1);
+  border: 1px solid var(--failed);
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+}
+
+.rendition-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.rendition-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.rendition-header h2 {
+  margin: 0;
+  font-size: 1.1em;
+}
+
+.controls {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.legs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+}
+
+.legs-table th,
+.legs-table td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.8em;
+  text-transform: uppercase;
+}
+
+.badge-running {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--running);
+}
+
+.badge-starting,
+.badge-restarting {
+  background: rgba(224, 160, 48, 0.15);
+  color: var(--warn);
+}
+
+.badge-stopped {
+  background: rgba(110, 118, 129, 0.15);
+  color: var(--stopped);
+}
+
+.badge-failed {
+  background: rgba(248, 81, 73, 0.15);
+  color: var(--failed);
+}
+
+.stats-warn {
+  color: var(--warn);
+}
