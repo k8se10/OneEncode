@@ -1,5 +1,19 @@
 # PATCHNOTES
 
+## Root cause CONFIRMED — jitter regression (task #24): the relay->rendition RTMP roundtrip itself is the mechanism (2026-08-13)
+
+Direct, decisive confirmation, via `scripts/jitterNoRtmpHopTest.ts` (new, `npm run investigate:jitter-nortmphop`): one ffmpeg process decodes the ingest exactly once and splits the decoded frames (`-filter_complex split`) into two encode branches — branch A is the relay's normal ull encode, published to the real relay RTMP path exactly as today; branch B is a rendition-style 1080p6M encode written **directly to a local file, no RTMP publish, no MediaMTX, no second process**. Same total GPU/encode workload as the real pipeline (both branches run concurrently, same settings as every prior test), with exactly one variable changed: no RTMP demux/remux roundtrip between the decode and the rendition-style encode.
+
+**Result: CoV = 0.0000 — perfectly uniform, matching baseline exactly.**
+
+This is decisive: the jitter is not caused by encoding twice, not NVENC, not libx264, not GPU/session contention (all already ruled out) — it's specifically the RTMP publish/subscribe roundtrip through MediaMTX between the relay and the rendition encode. The moment that roundtrip is removed (same encode work, same process boundary count otherwise unchanged for branch A), the rendition-style branch is indistinguishable from baseline.
+
+**The real tension this surfaces**: MediaMTX/RTMP was deliberately chosen for the relay->rendition and rendition->leg boundaries specifically *to decouple readers* for failure isolation (see architecture decision on rejecting a single monolithic `-filter_complex` process — CLAUDE.md §1). This experiment proves that exact decoupling mechanism is what introduces the jitter. There is a real tradeoff to make here, not a free fix: collapsing the relay->rendition boundary into one process (mirroring this test) would fix the jitter for renditions but reintroduce the coupling risk a rendition-stage crash was designed to avoid — though notably, legs/destinations (the boundary that actually matters most for isolation, since a destination failing shouldn't affect encoding) can likely stay on separate processes/RTMP reads unaffected, since this test didn't touch that boundary. **Task #24's root cause is now CONFIRMED, not just narrowed — the next step is an architecture decision about which process boundaries can safely absorb this fix and which must keep isolation, not further diagnostic work.**
+
+**Caveat, not yet addressed**: every experiment in this investigation, including this one, uses the same synthetic lavfi test source, not real OBS output. OBS's own capture/encode pipeline has its own overhead and pacing characteristics that could differ from the synthetic source — this investigation isolates the relay->rendition boundary specifically, using an identical ingest across every comparison, but real-OBS validation of the eventual fix is still a separate, open follow-up before calling this production-proven.
+
+---
+
 ## Investigated — jitter regression (task #24): root cause narrowed to live re-encode of an already-relayed stream; a third fix (`-fps_mode cfr`) tried and rejected (2026-08-13)
 
 Continuing from the entry directly below (two candidate fixes already rejected: `nobuffer`/`low_delay`, `writeQueueSize` both directions). Built three new isolation tools (`scripts/jitterHopIsolation.ts`, `scripts/jitterFpsModeTest.ts`, `scripts/jitterEncoderTest.ts`, all now permanent — `npm run investigate:jitter[-fpsmode|-encoder]`) to stop guessing at the architecture level and directly measure which hop introduces the jitter.

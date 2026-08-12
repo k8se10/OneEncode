@@ -16,6 +16,7 @@
     "investigate:jitter": "tsx scripts/jitterHopIsolation.ts",
     "investigate:jitter-fpsmode": "tsx scripts/jitterFpsModeTest.ts",
     "investigate:jitter-encoder": "tsx scripts/jitterEncoderTest.ts",
+    "investigate:jitter-nortmphop": "tsx scripts/jitterNoRtmpHopTest.ts",
     "web:install": "cd web && npm install",
     "web:build": "cd web && npm run build",
     "web:dev": "cd web && npm run dev"
