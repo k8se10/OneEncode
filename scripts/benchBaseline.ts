@@ -3,6 +3,7 @@ import { startRelayServer, stopRelayServer } from "../src/ingest/relayServer.js"
 import { buildEncodeArgv } from "../src/legs/argvBuilder.js";
 import { superviseLeg, type LegSupervisor } from "../src/health/monitor.js";
 import { resolveOutputPath } from "../src/destinations/localFileDestination.js";
+import { printJitterReport } from "./reportUtil.js";
 
 /**
  * Baseline comparison for Phase 1 (see the implementation plan's exit
@@ -30,6 +31,7 @@ async function main(): Promise<void> {
   );
 
   const controllers: LegSupervisor[] = [];
+  const legIds: string[] = [];
   for (const leg of config.legs) {
     if (!leg.enabled) continue;
     if (leg.type !== "local-file") {
@@ -46,9 +48,9 @@ async function main(): Promise<void> {
         kind: "local-file",
         path: resolveOutputPath({ ...leg, filenamePattern: `baseline_${leg.filenamePattern}` }),
       });
-    controllers.push(
-      superviseLeg({ legId: `baseline-${leg.id}`, encoderLabel: encoder, buildArgv, restartPolicy: config.restartPolicy }),
-    );
+    const legId = `baseline-${leg.id}`;
+    legIds.push(legId);
+    controllers.push(superviseLeg({ legId, encoderLabel: encoder, buildArgv, restartPolicy: config.restartPolicy }));
   }
 
   console.log(`[bench-baseline] ${controllers.length} independent leg(s) starting. Press Ctrl+C to stop.`);
@@ -60,6 +62,7 @@ async function main(): Promise<void> {
     console.log(`\n[bench-baseline] shutting down...`);
     await Promise.all(controllers.map((c) => c.stop()));
     stopRelayServer(relay);
+    printJitterReport("bench-baseline", legIds);
     process.exit(0);
   };
   process.on("SIGINT", shutdown);

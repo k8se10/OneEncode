@@ -1,6 +1,25 @@
 # PATCHNOTES
 
-## v0.4.0 (in progress) — NVENC probe, platform profiles, recovered planning context
+## v0.5.0 (in progress) — frame-pacing/jitter measurement, pipeline refactor
+
+### Added
+- `src/legs/statsAnalysis.ts: computeJitterStats` — mean/stddev/coefficient-of-variation over a leg's fps sample series, closing the real methodology gap found via recovered planning context (drop=/dup= counters can't see frame-pacing burstiness, which was the original reported symptom). 5 unit tests, including one proving a bursty series (30,90,30,90) is distinguishable from a steady one (60,60,60,60) at the same mean.
+- `src/logging/readLog.ts: readFpsSamplesForLegs` — reads today's structured JSONL log back and extracts fps samples per legId, decoupling benchmark analysis from the core supervisor (no live-callback threading needed).
+- `scripts/reportUtil.ts: printJitterReport` — prints a drop/dup + jitter summary table at benchmark shutdown; wired into both `scripts/benchBaseline.ts` and the newly-created `scripts/benchOneEncode.ts`.
+- **`scripts/benchOneEncode.ts` created** — this was referenced in `package.json`'s `bench:oneencode` script since Phase 1 but never actually existed; `npm start` was used as a stand-in. Now runs the real pipeline via the shared `src/pipeline.ts` module and prints the same jitter report as the baseline script for a direct comparison.
+- **Refactor**: extracted `src/index.ts`'s pipeline-building logic (relay, decode/relay, rendition grouping, NVENC tracking, leg supervision) into `src/pipeline.ts: startPipeline`, shared by both `index.ts` and `benchOneEncode.ts` — the benchmark now exercises the exact same code path as production instead of a parallel reimplementation.
+
+### Verified live
+- Ran `bench:oneencode` against the synthetic source; confirmed the refactored pipeline behaves identically to before (rendition dedup, restart/backoff, NVENC tracking all unaffected by the extraction).
+- An extended run correctly hit the rolling-hour restart cap (`maxRestartsPerHour: 5`) once the source went away and stayed away, marking legs `leg_failed_permanent` rather than looping forever — unplanned but welcome real-world validation of that Phase 4 logic under a longer-than-usual outage.
+- Verified the jitter report directly against real collected log data: `local-archive-1`/`local-archive-2` (the rendition-dedup pair from Phase 3.5) again reported byte-for-byte identical jitter stats (76 samples, mean 67.9fps, stddev 9.03, CoV 0.133) — an independent reconfirmation of the dedup correctness from a different angle than the earlier file-size check.
+
+### Still open
+- The tooling to measure frame-pacing jitter now exists, but the actual comparative baseline-vs-design benchmark re-run using it — to properly re-evaluate Phase 1's "more nuanced than a clean win" finding — has not been performed yet.
+
+---
+
+## v0.4.0 — NVENC probe, platform profiles, recovered planning context
 
 ### Added
 - `src/nvenc/sessionTracker.ts` — `NvencSessionTracker` + `selectEncoder` walk a rendition's `encoderPreference` list, skipping NVENC entries once the probed ceiling is reached (falls back to a conservative default of 3 with a loud warning if the probe hasn't been run yet), logging an `encoder_fallback` event on any actual fallback. Wired into `src/index.ts` — encoder choice is made once per rendition at orchestrator startup (a scoped simplification: not re-evaluated on every crash-restart). 7 new unit tests. Live smoke-tested: pipeline runs unaffected with the tracker in place (ceiling of 16, only 2 NVENC sessions in use, no fallback triggered, as expected).
