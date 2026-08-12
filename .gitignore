@@ -16,6 +16,11 @@ recordings/
 # Sensitive internal notes (per CLAUDE.md §2A redaction posture)
 re_notes/
 
+# Internal steering docs — kept locally to drive Claude Code, deliberately
+# not published to the public repo (removed from git history 2026-08-13).
+CLAUDE.md
+AGENTS.md
+
 # Vendored third-party binaries fetched by setup scripts
 tools/mediamtx/
 
