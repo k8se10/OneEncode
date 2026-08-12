@@ -15,6 +15,13 @@ logDestinations: [stdout]
 rtmp: yes
 rtmpAddress: :1935
 
+# writeQueueSize (default 512, tried both up and down as part of the
+# jitter-regression investigation, task #24): NEITHER direction measurably
+# changed the delivery jitter found in rendition-dedup legs (confirmed via
+# both the -stats CoV metric and a real ffprobe frame-PTS ground-truth
+# cross-check). Ruled out — left at the default rather than an unproven
+# override. See PATCHNOTES.md and CLAUDE.md §8 for the full writeup.
+
 # Not needed for this project's RTMP-only relay use case — disabled to keep
 # the listener surface minimal (this binds to a local port either way, but
 # no reason to open protocols we don't use).

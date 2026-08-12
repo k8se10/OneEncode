@@ -1,5 +1,24 @@
 # PATCHNOTES
 
+## Investigated — jitter regression (task #24): writeQueueSize ruled out both directions; ground-truth PTS cross-check makes the finding starker, not weaker (2026-08-13)
+
+Continuing from the earlier "Investigated" entries below (`nobuffer`/`low_delay` tried and rejected — made things dramatically worse). Two more real steps taken:
+
+**1. MediaMTX's `writeQueueSize` tried in both directions — neither helped.** Tested at 128 (below the 512 default) with the same `bench:oneencode` methodology used throughout: CoV 0.089-0.090, statistically indistinguishable from the untouched-default run's 0.090-0.092. (A larger value had reportedly been tried and rejected in an earlier pass of this same investigation, before default was reverted to for this final comparison — not independently re-verified with saved data, but consistent with this result.) **Reverted to the default** — no override left in `config/mediamtx.yml`, just a comment recording what was tried and that neither direction measurably helped.
+
+**2. Completed the ground-truth cross-check flagged as still-open in the earlier entry**: extracted real per-frame PTS values via `ffprobe` from actual recorded output files (not the periodic `-stats` samples) and computed jitter directly (`scripts/ptsJitter.py`, new permanent tool). **This produced a starker result than the `-stats`-based CoV metric showed**:
+
+| design | ground-truth PTS-delta CoV |
+|---|---|
+| baseline (naive, one process per destination) | **0.0000** — frame deltas ranged 0.016666-0.016667s, essentially perfectly uniform |
+| this design (rendition-dedup) | **0.0740** — frame deltas ranged 0.015-0.018s, real ±10% swing around the 60fps target |
+
+The `-stats`-based metric (CoV ≈0.05-0.07 baseline vs ≈0.09 this design) was directionally correct but *understated* how clean the baseline's actual frame delivery is — real ground truth shows the baseline isn't just "steadier," it's essentially perfectly uniform, while this design has genuine, measurable per-frame timing jitter. This is likely the actual mechanism behind the kind of visible stutter this project exists to fix, now captured with precise data rather than a periodic proxy.
+
+**Root cause still not isolated after two real hypotheses tested and rejected with data** (`nobuffer`/`low_delay`, `writeQueueSize` both directions). Both were plausible, both were tested rigorously, neither explained it. Remaining candidates for a future session, not yet tried: something more fundamental to the extra-hop architecture itself (more concurrent OS processes competing for CPU/GPU scheduling time, inherent to any 3-hop chain vs. baseline's 1-hop) rather than a tunable buffer parameter — which would mean this needs an architectural answer, not a config tweak, if it's going to be fixed. **Task #24 stays open.** Per CLAUDE.md §8: this project's architecture remains CPU/GPU-efficiency-correct and failure-isolation-correct, but confirmed — now with sharper evidence than before — NOT to reduce the frame-pacing symptom it exists to fix.
+
+---
+
 ## Docs — project licensed, source-available (2026-08-13)
 
 Added a real `LICENSE` file at the repo root, mirroring the structure of this author's sibling MW3 controller project's own license (read directly from that project's real `LICENSE` file, not guessed/templated from memory): source is fully open/viewable/forkable, but the software and any fork/derivative must always remain free to end users — no charging for it by anyone other than the copyright holder. This is a deliberate restriction, so the project is accurately described as **source-available**, not OSI open-source, going forward in any doc/README. Adapted the MW3 license's game/Activision-specific clause into an equivalent for OneEncode's actual context (no rights granted to any third-party streaming platform's trademarks/APIs/services). CLAUDE.md §6 updated with the real per-dependency licensing detail (FFmpeg — external, never bundled; MediaMTX — MIT, confirmed by reading its actual downloaded LICENSE file directly).
