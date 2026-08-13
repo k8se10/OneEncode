@@ -1,5 +1,20 @@
 # PATCHNOTES
 
+## v0.11.0 — broadcast arm switch: manual gate before any rtmp-push leg starts
+
+Ahead of the first real 3-platform test (Kick, Twitch, YouTube configured with real credentials), added a deliberate safety gate so a config with `enabled: true` platform legs can never silently start broadcasting the moment the orchestrator boots.
+
+### Added
+- `src/health/broadcastArm.ts`: an in-memory-only armed/disarmed switch. Always starts disarmed on every orchestrator restart — no persisted "armed" state can survive a crash and let a leg start unattended.
+- `rtmp-push` legs now start **staged, not running**, at `startPipeline` regardless of `enabled: true` — see `src/pipeline.ts`. `local-file` legs are unaffected (no external side effect, still auto-start as before).
+- `restartManaged` (the same function backing both "Restart" and the new "Go Live" dashboard action) now throws if the target leg is `rtmp-push` and the broadcast switch is disarmed — one enforcement point, not two.
+- `RunningPipeline` gained `isArmed()`, `arm()`, and `disarm()`. `disarm()` is a real kill switch, not just a future-start block — it immediately stops every currently-running `rtmp-push` leg, returning the ids it stopped.
+- New endpoints (`src/ui/api.ts`): `GET /api/broadcast/armed`, `POST /api/broadcast/arm`, `POST /api/broadcast/disarm`. `GET /api/status` now also reports `broadcastArmed`.
+- Dashboard (`web/src/App.tsx`): a persistent arm/disarm banner (red when armed, since that's the state where real data can leave the machine). Per-leg controls show "Go Live" instead of "Restart" for a staged `rtmp-push` leg, disabled with a tooltip when disarmed.
+
+### Verified
+Typecheck clean (backend + web), full existing test suite still green (60/60 — no unit test coverage added for this yet, it's an integration-level gate; live dashboard verification pending the actual 3-platform run).
+
 ## v0.10.0 — dashboard: clearer platform-destination setup, no more raw env-var field
 
 Follows real-world feedback after the OBS validation above: the dashboard could add an RTMP-push leg, but the flow was confusing — it asked for a "destination env var name" (an internal config-loader detail no streamer should need to understand) and a single "Stream URL / key" field the user had to manually assemble, even though platforms like Twitch and YouTube give you the server and stream key as two separate fields in their own dashboard.

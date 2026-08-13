@@ -46,7 +46,23 @@ export function createApiRouter(pipeline: RunningPipeline, liveState: LiveStateT
       };
     });
 
-    res.json({ legs, renditions, encode: { state: encodeState } });
+    res.json({ legs, renditions, encode: { state: encodeState }, broadcastArmed: pipeline.isArmed() });
+  });
+
+  // Broadcast arm switch: the gate in front of every rtmp-push leg (real
+  // external platforms). Disarmed by default on every orchestrator start.
+  router.get("/broadcast/armed", (_req, res) => {
+    res.json({ armed: pipeline.isArmed() });
+  });
+
+  router.post("/broadcast/arm", (_req, res) => {
+    pipeline.arm();
+    res.json({ armed: true });
+  });
+
+  router.post("/broadcast/disarm", async (_req, res) => {
+    const stoppedLegs = await pipeline.disarm();
+    res.json({ armed: false, stoppedLegs });
   });
 
   router.post("/legs/:id/stop", async (req, res) => {
@@ -63,7 +79,11 @@ export function createApiRouter(pipeline: RunningPipeline, liveState: LiveStateT
       await pipeline.restartManaged(req.params.id);
       res.json({ ok: true });
     } catch (err) {
-      res.status(404).json({ error: err instanceof Error ? err.message : String(err) });
+      const message = err instanceof Error ? err.message : String(err);
+      // Not-armed is a distinct, expected rejection (403) — anything else
+      // (unknown leg id) stays 404.
+      const status = message.startsWith("Broadcast is not armed") ? 403 : 404;
+      res.status(status).json({ error: message });
     }
   });
 

@@ -190,6 +190,49 @@ code {
   border-bottom-color: var(--panel);
 }
 
+/* Broadcast arm switch banner */
+.arm-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-radius: 4px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  font-weight: 600;
+}
+
+.arm-banner.disarmed {
+  background: rgba(110, 118, 129, 0.15);
+  border: 1px solid var(--stopped);
+  color: var(--text);
+}
+
+.arm-banner.armed {
+  background: rgba(248, 81, 73, 0.15);
+  border: 1px solid var(--failed);
+  color: var(--failed);
+}
+
+.arm-banner button {
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.arm-banner.armed button {
+  background: var(--failed);
+}
+
+.arm-banner button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Notice banner (e.g. "restart required") */
 .notice-banner {
   background: rgba(224, 160, 48, 0.1);

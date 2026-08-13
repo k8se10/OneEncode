@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  armBroadcast,
   AuthError,
   clearStoredToken,
+  disarmBroadcast,
   fetchStatus,
   getStoredToken,
   openLiveSocket,
@@ -85,6 +87,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [restartNotice, setRestartNotice] = useState(false);
+  const [broadcastArmed, setBroadcastArmed] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -97,6 +100,7 @@ function App() {
         setLegs(status.legs);
         setRenditions(status.renditions);
         setEncode(status.encode);
+        setBroadcastArmed(status.broadcastArmed);
         setError(null);
       } catch (err) {
         if (err instanceof AuthError) {
@@ -151,6 +155,16 @@ function App() {
     }
   };
 
+  const toggleBroadcastArm = () =>
+    withBusy("broadcast-arm", async () => {
+      if (broadcastArmed) {
+        await disarmBroadcast(token!);
+      } else {
+        await armBroadcast(token!);
+      }
+      setBroadcastArmed(!broadcastArmed);
+    });
+
   const legsByRendition = useMemo(() => {
     const map = new Map<string, LegRow[]>();
     for (const leg of legs) {
@@ -176,6 +190,17 @@ function App() {
           </button>
         </div>
       </header>
+
+      <div className={`arm-banner ${broadcastArmed ? "armed" : "disarmed"}`}>
+        <span>
+          {broadcastArmed
+            ? "ARMED — rtmp-push legs (real platforms) may be started"
+            : "DISARMED — rtmp-push legs cannot be started or restarted"}
+        </span>
+        <button disabled={busyIds.has("broadcast-arm")} onClick={toggleBroadcastArm}>
+          {broadcastArmed ? "Disarm (stops all live platform legs)" : "Arm for broadcast"}
+        </button>
+      </div>
 
       {restartNotice && (
         <div className="notice-banner">
@@ -249,8 +274,12 @@ function App() {
                     <button disabled={busyIds.has(leg.id)} onClick={() => withBusy(leg.id, () => stopLeg(token, leg.id))}>
                       Stop
                     </button>
-                    <button disabled={busyIds.has(leg.id)} onClick={() => withBusy(leg.id, () => restartLeg(token, leg.id))}>
-                      Restart
+                    <button
+                      disabled={busyIds.has(leg.id) || (leg.type === "rtmp-push" && !broadcastArmed)}
+                      title={leg.type === "rtmp-push" && !broadcastArmed ? "Arm broadcasting first" : undefined}
+                      onClick={() => withBusy(leg.id, () => restartLeg(token, leg.id))}
+                    >
+                      {leg.type === "rtmp-push" && leg.state === "stopped" ? "Go Live" : "Restart"}
                     </button>
                   </td>
                 </tr>
