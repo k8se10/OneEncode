@@ -1,4 +1,5 @@
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { loadConfig, ConfigError } from "./config/load.js";
 import { logEvent } from "./logging/logger.js";
 import { startPipeline } from "./pipeline.js";
@@ -23,6 +24,26 @@ if (process.platform === "win32") {
 }
 
 /**
+ * Auto-launches the system default browser to the dashboard on startup —
+ * requested directly by the user, who didn't want to manually navigate to
+ * the localhost URL every time. Best-effort only: a failure here (no
+ * default browser configured, `start` unavailable, etc.) must never crash
+ * the orchestrator itself, since the dashboard is still reachable manually.
+ * `cmd /c start "" <url>` is the standard way to invoke the OS "open with
+ * default app" behavior on Windows from a spawned child process — the empty
+ * "" is required, otherwise `start` treats the URL as its window-title
+ * argument instead of the target to open.
+ */
+function openBrowser(url: string): void {
+  if (process.platform !== "win32") return;
+  try {
+    spawn("cmd", ["/c", "start", "", url], { windowsHide: true, stdio: "ignore", detached: true }).unref();
+  } catch (err) {
+    console.warn(`[oneencode] couldn't auto-open the dashboard in a browser: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
  * Orchestrator entrypoint. Pipeline-building logic lives in src/pipeline.ts
  * (shared with scripts/benchOneEncode.ts) — this file is just startup,
  * config-error handling, and graceful shutdown wiring.
@@ -42,6 +63,7 @@ async function main(): Promise<void> {
 
   const pipeline = await startPipeline(config, destinations);
   const ui = startUiServer(pipeline);
+  openBrowser(`http://127.0.0.1:${ui.port}`);
   console.log(`[oneencode] Press Ctrl+C to stop.`);
 
   let shuttingDown = false;

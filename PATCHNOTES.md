@@ -1,5 +1,9 @@
 # PATCHNOTES
 
+## v0.15.0 — auto-open the dashboard in the default browser on startup
+
+Requested directly by the user ("I hate the localhost approach, UI should be internal") — clarified down to: keep the existing server+browser architecture, just stop requiring a manual URL visit. `src/index.ts` now spawns `cmd /c start "" <dashboard-url>` right after the UI server comes up (same point in startup as before — still gated on the pipeline actually being ready, same known behavior as always). Best-effort: wrapped in try/catch, a failure to launch a browser logs a warning and never crashes the orchestrator.
+
 ## v0.14.0 — fix: bundled ffmpeg wasn't found by the packaged exe; a spawn failure crashed the whole orchestrator
 
 Found while actually bundling ffmpeg.exe alongside `oneencode.exe` for a personal streaming-PC transfer (not a public-repo redistribution — see CLAUDE.md §6/§2A additions).
