@@ -1,5 +1,13 @@
 # PATCHNOTES
 
+## Fixed — Kick RTMPS was never a TLS issue, it was a malformed destination URL
+
+Real root cause of `kick-main` dying at a consistent ~2s, found by testing the destination URL directly against Kick's real ingest with verbose ffmpeg logging (`-loglevel debug`), isolated from the rest of the pipeline: Kick's URL (`rtmps://<host>/<KEY>`, one path segment) has no separate "app" path segment. ffmpeg's native RTMP protocol handler splits a URL's path into an "app" name and a stream key ("fname") — with only one segment, the whole thing became the app name and the actual publish command was sent with an **empty** stream name (confirmed in the debug log: `Sending publish command for ''`), which Kick's server silently rejected. Compare Twitch's working URL (`rtmp://live.twitch.tv/app/<KEY>`, two segments) — the difference was never TLS.
+
+**Fix**: `ONEENCODE_KICK_MAIN_URL` now has an explicit `/app/` segment before the key (`rtmps://REDACTED-HOST.global-contribute.live-video.net/app/<KEY>`), matching the conventional RTMPS URL structure for AWS IVS-based ingest (Kick's underlying infrastructure, given its `global-contribute.live-video.net` domain). **Verified live**: a real 15-second H.264 test stream pushed successfully to Kick's actual ingest, full duration, clean shutdown, zero errors.
+
+The v0.18.0 ffmpeg TLS-backend swap (GnuTLS → SChannel) below was **not** the actual fix — it's kept anyway since it's a reasonable general improvement, but it wasn't what resolved this. Worth remembering for any future single-path destination URL (a platform whose dashboard gives just a bare host with no app segment).
+
 ## Investigated — HEVC/AV1: MediaMTX v1.20.0 accepts them in, can't serve them back out via RTMP
 
 Re-investigated after the user correctly pushed back on this project's own earlier "RTMP can't do HEVC" finding as too broad (real-world OBS→YouTube AV1 streaming does exist, via the 2023 "Enhanced RTMP" spec that Twitch/YouTube/OBS all support, which ffmpeg's flv muxer has implemented since v6.1).
