@@ -24,7 +24,15 @@ import statistics
 
 path = sys.argv[1]
 with open(path) as f:
-    pts = [float(line.strip()) for line in f if line.strip()]
+    # ffprobe's csv=p=0 output occasionally has a trailing comma or an N/A
+    # field (e.g. a frame missing pts_time) -- take the first field and
+    # skip anything that isn't a real number rather than failing outright.
+    pts = []
+    for line in f:
+        field = line.strip().split(",")[0]
+        if not field or field == "N/A":
+            continue
+        pts.append(float(field))
 
 deltas = [pts[i + 1] - pts[i] for i in range(len(pts) - 1)]
 mean = statistics.mean(deltas)

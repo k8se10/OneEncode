@@ -27,7 +27,11 @@ async function main(): Promise<void> {
     shuttingDown = true;
     console.log(`\n[bench-oneencode] shutting down...`);
     await pipeline.stopAll();
-    printJitterReport("bench-oneencode", [...pipeline.legIds, ...pipeline.renditionLegIds], startedAt);
+    // "relay" now covers the combined decode+relay+rendition-encode process
+    // (see CLAUDE.md, task #24) — its own -stats reflects one aggregate
+    // stream, not per-rendition figures, but is still worth reporting
+    // alongside each leg's own accurate per-rendition stats.
+    printJitterReport("bench-oneencode", ["relay", ...pipeline.legIds], startedAt);
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
