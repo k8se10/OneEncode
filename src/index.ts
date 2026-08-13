@@ -63,7 +63,15 @@ async function main(): Promise<void> {
 
   const pipeline = await startPipeline(config, destinations);
   const ui = startUiServer(pipeline);
-  openBrowser(`http://127.0.0.1:${ui.port}`);
+  // Passing the token in the auto-launch URL is a deliberate, documented
+  // relaxation of "never put the token in a URL" (CLAUDE.md's UI code
+  // rules) — same exception already carved out for the WebSocket connection
+  // (browsers can't attach a custom header there either). The frontend
+  // strips it from the address bar immediately after reading it. Requested
+  // directly by the user to make the dashboard fully zero-manual-step on
+  // launch; acceptable for the primary single-user dedicated-streaming-PC
+  // target, less so on a machine shared with other local users.
+  openBrowser(`http://127.0.0.1:${ui.port}/?token=${ui.token}`);
   console.log(`[oneencode] Press Ctrl+C to stop.`);
 
   let shuttingDown = false;

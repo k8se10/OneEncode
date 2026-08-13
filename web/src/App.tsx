@@ -24,6 +24,18 @@ function resolutionLabel(resolution: "source" | { width: number; height: number 
   return resolution === "source" ? "source" : `${resolution.width}x${resolution.height}`;
 }
 
+/**
+ * The orchestrator's own auto-launched browser tab (src/index.ts) passes
+ * the dashboard token as a ?token= query param so login is zero-manual-step
+ * on startup — see that file's comment for the security tradeoff this
+ * deliberately accepts. Read once on load; the caller is responsible for
+ * stripping it from the address bar immediately after (see the effect
+ * below) so it doesn't linger visibly in the URL/browser history.
+ */
+function getUrlToken(): string | null {
+  return new URLSearchParams(window.location.search).get("token");
+}
+
 function StatsCell({ stats }: { stats: LegStats | null }) {
   if (!stats) return <span className="muted">—</span>;
   const dropWarn = stats.dropFrames > 0 || stats.dupFrames > 0;
@@ -79,7 +91,7 @@ function LoginGate({ onAuthed }: { onAuthed: (token: string) => void }) {
 }
 
 function App() {
-  const [token, setToken] = useState<string | null>(() => getStoredToken());
+  const [token, setToken] = useState<string | null>(() => getUrlToken() ?? getStoredToken());
   const [tab, setTab] = useState<"monitor" | "configure">("monitor");
   const [legs, setLegs] = useState<LegRow[]>([]);
   const [renditions, setRenditions] = useState<RenditionRow[]>([]);
@@ -88,6 +100,19 @@ function App() {
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [restartNotice, setRestartNotice] = useState(false);
   const [broadcastArmed, setBroadcastArmed] = useState(false);
+
+  // Persist a URL-provided token (see getUrlToken) so future manual reloads
+  // don't need it again, then strip it from the address bar immediately —
+  // it shouldn't linger visibly in the URL/browser history any longer than
+  // this one initial load requires.
+  useEffect(() => {
+    const urlToken = getUrlToken();
+    if (!urlToken) return;
+    storeToken(urlToken);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("token");
+    window.history.replaceState({}, "", url.toString());
+  }, []);
 
   useEffect(() => {
     if (!token) return;

@@ -1,5 +1,14 @@
 # PATCHNOTES
 
+## v0.16.0 — auto-login: the auto-launched dashboard tab is now zero-manual-step
+
+User feedback after v0.15.0: opening the browser automatically was good, but you still had to manually copy the token out of `state/ui-token.txt` and paste it into the login screen every time. Fixed with the user's explicit sign-off, since this touches CLAUDE.md's "the token is never displayed in a URL" rule.
+
+### Changed
+- `src/index.ts`'s auto-launch URL now includes `?token=...`.
+- `web/src/App.tsx` reads it once on load (`getUrlToken`), persists it to `localStorage` the same as a manual paste would, and immediately strips it from the address bar via `history.replaceState` so it doesn't linger visibly in the URL/browser history any longer than that one initial load.
+- CLAUDE.md/AGENTS.md's "never in a URL" rule updated to document this as a second narrow, deliberate exception (alongside the pre-existing WebSocket one) — explicitly scoped to the orchestrator's own auto-launched tab only, not any other link/redirect, and explicitly noted as a tradeoff accepted for the single-user dedicated-streaming-PC target rather than a shared machine.
+
 ## v0.15.0 — auto-open the dashboard in the default browser on startup
 
 Requested directly by the user ("I hate the localhost approach, UI should be internal") — clarified down to: keep the existing server+browser architecture, just stop requiring a manual URL visit. `src/index.ts` now spawns `cmd /c start "" <dashboard-url>` right after the UI server comes up (same point in startup as before — still gated on the pipeline actually being ready, same known behavior as always). Best-effort: wrapped in try/catch, a failure to launch a browser logs a warning and never crashes the orchestrator.
