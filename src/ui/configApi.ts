@@ -31,6 +31,18 @@ import { rootConfigSchema, legSchema, renditionSchema, encoderName, type RootCon
 const CONFIG_DIR = path.resolve(process.cwd(), "config");
 const LEGS_LOCAL_PATH = path.join(CONFIG_DIR, "legs.local.yaml");
 const SECRETS_LOCAL_PATH = path.join(CONFIG_DIR, "secrets.local.yaml");
+const PLATFORM_PROFILES_PATH = path.join(CONFIG_DIR, "platformProfiles.yaml");
+
+/**
+ * destinationUrlEnv (the env-var name a leg's real URL/key is resolved
+ * from at startup, see src/config/load.ts) is an internal naming detail —
+ * it doesn't need to be something a streamer types in themselves. The UI
+ * no longer collects it; this derives a stable, readable one from the
+ * leg's own id so the schema's requirement is still satisfied.
+ */
+function deriveDestinationUrlEnv(legId: string): string {
+  return `ONEENCODE_${legId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_URL`;
+}
 
 export class ConfigApiError extends Error {
   constructor(
@@ -130,6 +142,25 @@ export function createConfigApiRouter(): Router {
     }
   });
 
+  // CLAUDE.md architecture decision #10: published platform-recommended
+  // rendition settings, seeded as an optional DEFAULT the UI can offer
+  // when creating a new rendition -- never applied automatically, never
+  // overrides an already-set value. Read fresh on every request rather
+  // than cached, since it's a small file a maintainer might hand-edit.
+  router.get("/platform-profiles", (_req, res) => {
+    try {
+      if (!fs.existsSync(PLATFORM_PROFILES_PATH)) {
+        res.json({ platforms: [] });
+        return;
+      }
+      const parsed = yaml.load(fs.readFileSync(PLATFORM_PROFILES_PATH, "utf8")) as { platforms?: unknown[] };
+      res.json({ platforms: parsed.platforms ?? [] });
+    } catch (err) {
+      const status = err instanceof ConfigApiError ? err.status : 500;
+      res.status(status).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // --- Renditions ---
 
   router.post("/renditions", (req, res) => {
@@ -193,6 +224,9 @@ export function createConfigApiRouter(): Router {
   router.post("/legs", (req, res) => {
     try {
       const { secretValue, ...legBody } = (req.body ?? {}) as Record<string, unknown> & { secretValue?: string };
+      if (legBody.type === "rtmp-push" && !legBody.destinationUrlEnv && typeof legBody.id === "string") {
+        legBody.destinationUrlEnv = deriveDestinationUrlEnv(legBody.id);
+      }
       const parsedLeg = legSchema.safeParse(legBody);
       if (!parsedLeg.success) {
         res.status(400).json({ error: formatIssues(parsedLeg.error) });
@@ -212,6 +246,14 @@ export function createConfigApiRouter(): Router {
   router.put("/legs/:id", (req, res) => {
     try {
       const { secretValue, ...legBody } = (req.body ?? {}) as Record<string, unknown> & { secretValue?: string };
+      if (legBody.type === "rtmp-push" && !legBody.destinationUrlEnv) {
+        // Preserve the existing env-var name on edit (the UI never sends
+        // one) rather than re-deriving it -- re-deriving would orphan
+        // whatever secret is already stored under the current name.
+        const existing = readRawConfig().legs.find((l) => l.id === req.params.id);
+        legBody.destinationUrlEnv =
+          existing?.type === "rtmp-push" ? existing.destinationUrlEnv : deriveDestinationUrlEnv(req.params.id);
+      }
       const parsedLeg = legSchema.safeParse({ ...legBody, id: req.params.id });
       if (!parsedLeg.success) {
         res.status(400).json({ error: formatIssues(parsedLeg.error) });

@@ -1,5 +1,20 @@
 # PATCHNOTES
 
+## v0.10.0 — dashboard: clearer platform-destination setup, no more raw env-var field
+
+Follows real-world feedback after the OBS validation above: the dashboard could add an RTMP-push leg, but the flow was confusing — it asked for a "destination env var name" (an internal config-loader detail no streamer should need to understand) and a single "Stream URL / key" field the user had to manually assemble, even though platforms like Twitch and YouTube give you the server and stream key as two separate fields in their own dashboard.
+
+### Changed
+- `src/ui/configApi.ts`: `destinationUrlEnv` is now derived server-side from the leg's own id (`ONEENCODE_<ID>_URL`) instead of being a UI-facing field. Editing a leg preserves its existing env-var name rather than re-deriving one (re-deriving would orphan the secret already stored under the old name).
+- New `GET /api/config/platform-profiles` endpoint serves `config/platformProfiles.yaml` (Twitch/YouTube/Kick/Facebook Live recommended settings, architecture decision #10 — built 2026-08-13, never wired into anything until now) to the dashboard.
+- `web/src/ConfigManager.tsx`: the rendition form gained an optional "Prefill from a platform" dropdown that fills in resolution/fps/bitrate from that platform's published recommendations — suggestion only, never overrides an already-set value, matches decision #10's hard rule exactly. The leg form's "Type" field is now "Send this to" with plain-language options, and the old single "Stream URL / key" input is now two fields — "RTMP server" and "Stream key" — joined client-side into the URL the backend expects, matching how platforms actually present the information instead of asking the user to concatenate it themselves.
+- 4 new backend tests (`tests/ui/configApi.test.ts`): destinationUrlEnv auto-derivation on create, preservation on edit, and the new platform-profiles endpoint (empty-list fallback + real data).
+
+### Verified live (real browser)
+Logged into the dashboard, confirmed the "Encode pipeline" single-control card (from the combined-process fix above) renders correctly with live stats. Opened the platform-prefill dropdown on a new rendition, selected YouTube Live, confirmed video bitrate changed 6000→9000 and audio 160→128 exactly matching `platformProfiles.yaml`. Created an rtmp-push leg with separate server (`rtmp://live.twitch.tv/app/`, deliberately with a trailing slash) and key fields, confirmed the on-disk secret joined them correctly with no double slash (`rtmp://live.twitch.tv/app/live_FAKE_KEY_ABC123`) and the env-var name was auto-derived (`ONEENCODE_TWITCH_TEST2_URL`). Cleaned up both test legs through the UI, confirmed config and secrets files returned to their original clean state.
+
+---
+
 ## Task #24 CLOSED — combined-process fix shipped, root mechanism fully characterized, validated against a real OBS feed (2026-08-13)
 
 Closing entry for the rendition-dedup jitter investigation. Summary of the full chain, newest findings first (earlier entries below have the detailed evidence for each step).

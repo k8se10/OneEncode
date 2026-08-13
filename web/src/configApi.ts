@@ -43,6 +43,19 @@ export interface ConfigResponse {
   encoderOptions: string[];
 }
 
+export interface PlatformProfile {
+  platformName: string;
+  confidence?: string;
+  recommended: {
+    resolution: Resolution;
+    fps: number;
+    videoBitrateKbps?: number;
+    audioBitrateKbps: number;
+    keyframeIntervalSec: number;
+  };
+  notes?: string;
+}
+
 export class ConfigApiValidationError extends Error {}
 
 async function configFetch(path: string, token: string, init?: RequestInit): Promise<Response> {
@@ -73,6 +86,13 @@ export async function updateRendition(token: string, id: string, rendition: Part
 
 export async function deleteRendition(token: string, id: string): Promise<void> {
   await configFetch(`/renditions/${encodeURIComponent(id)}`, token, { method: "DELETE" });
+}
+
+/** Published platform-recommended settings (CLAUDE.md architecture decision #10) — a suggestion only, never applied automatically. */
+export async function fetchPlatformProfiles(token: string): Promise<PlatformProfile[]> {
+  const res = await configFetch("/platform-profiles", token);
+  const body = await res.json();
+  return body.platforms ?? [];
 }
 
 export interface LegWriteBody {

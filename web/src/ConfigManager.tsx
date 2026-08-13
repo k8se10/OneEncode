@@ -6,11 +6,13 @@ import {
   deleteLeg,
   deleteRendition,
   fetchConfig,
+  fetchPlatformProfiles,
   updateLeg,
   updateRendition,
   type ConfigResponse,
   type LegConfigEntry,
   type LegWriteBody,
+  type PlatformProfile,
   type RenditionConfig,
   type Resolution,
 } from "./configApi";
@@ -90,10 +92,12 @@ function formToRenditionBody(f: RenditionFormState): Partial<RenditionConfig> {
 
 function RenditionForm({
   initial,
+  platformProfiles,
   onCancel,
   onSubmit,
 }: {
   initial: RenditionFormState;
+  platformProfiles: PlatformProfile[];
   onCancel: () => void;
   onSubmit: (body: Partial<RenditionConfig>) => Promise<void>;
 }) {
@@ -104,6 +108,26 @@ function RenditionForm({
 
   const set = <K extends keyof RenditionFormState>(key: K, value: RenditionFormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
+
+  // Suggestion only (CLAUDE.md architecture decision #10) -- prefills the
+  // still-editable fields of a brand-new rendition, never touches an
+  // already-set value or an existing rendition being edited.
+  const applyPlatformPreset = (platformName: string) => {
+    const profile = platformProfiles.find((p) => p.platformName === platformName);
+    if (!profile) return;
+    const { recommended } = profile;
+    setForm((f) => ({
+      ...f,
+      resolutionMode: recommended.resolution === "source" ? "source" : "custom",
+      width: recommended.resolution === "source" ? f.width : String(recommended.resolution.width),
+      height: recommended.resolution === "source" ? f.height : String(recommended.resolution.height),
+      fps: String(recommended.fps),
+      rateMode: "bitrate",
+      videoBitrateKbps: recommended.videoBitrateKbps ? String(recommended.videoBitrateKbps) : f.videoBitrateKbps,
+      audioBitrateKbps: String(recommended.audioBitrateKbps),
+      keyframeIntervalSec: String(recommended.keyframeIntervalSec),
+    }));
+  };
 
   const submit = async () => {
     setSaving(true);
@@ -119,6 +143,22 @@ function RenditionForm({
 
   return (
     <div className="form-card">
+      {!isEditing && platformProfiles.length > 0 && (
+        <label>
+          Prefill from a platform's recommended settings (optional)
+          <select defaultValue="" onChange={(e) => e.target.value && applyPlatformPreset(e.target.value)}>
+            <option value="">— pick a platform to fill in reasonable defaults —</option>
+            {platformProfiles.map((p) => (
+              <option key={p.platformName} value={p.platformName}>
+                {p.platformName}
+              </option>
+            ))}
+          </select>
+          <span className="muted">
+            Just fills in the fields below with that platform's published recommendations — everything stays editable, and nothing here is applied automatically.
+          </span>
+        </label>
+      )}
       <label>
         Rendition id
         <input value={form.id} onChange={(e) => set("id", e.target.value)} disabled={isEditing} placeholder="e.g. 1080p60-6M" />
@@ -207,8 +247,8 @@ interface LegFormState {
   enabled: boolean;
   outputDir: string;
   filenamePattern: string;
-  destinationUrlEnv: string;
-  secretValue: string;
+  rtmpServer: string;
+  streamKey: string;
 }
 
 function blankLegForm(renditions: RenditionConfig[]): LegFormState {
@@ -220,8 +260,8 @@ function blankLegForm(renditions: RenditionConfig[]): LegFormState {
     enabled: true,
     outputDir: "recordings",
     filenamePattern: "archive_{timestamp}.mp4",
-    destinationUrlEnv: "",
-    secretValue: "",
+    rtmpServer: "",
+    streamKey: "",
   };
 }
 
@@ -234,8 +274,8 @@ function legToForm(leg: LegConfigEntry): LegFormState {
     enabled: leg.enabled,
     outputDir: leg.type === "local-file" ? leg.outputDir : "recordings",
     filenamePattern: leg.type === "local-file" ? leg.filenamePattern : "archive_{timestamp}.mp4",
-    destinationUrlEnv: leg.type === "rtmp-push" ? leg.destinationUrlEnv : "",
-    secretValue: "",
+    rtmpServer: "",
+    streamKey: "",
   };
 }
 
@@ -259,10 +299,22 @@ function LegForm({
 
   const set = <K extends keyof LegFormState>(key: K, value: LegFormState[K]) => setForm((f) => ({ ...f, [key]: value }));
 
+  // Platforms give you the RTMP server and the stream key as two separate
+  // fields in their own dashboard (Twitch, YouTube, etc.) -- collect them
+  // the same way rather than making the user concatenate a URL by hand,
+  // then join them the way ffmpeg needs it: server (no trailing slash) + "/" + key.
+  const joinedStreamUrl = (): string => {
+    const server = form.rtmpServer.trim().replace(/\/+$/, "");
+    const key = form.streamKey.trim();
+    if (!server && !key) return "";
+    return key ? `${server}/${key}` : server;
+  };
+
   const submit = async () => {
     setSaving(true);
     setError(null);
     try {
+      const streamUrl = joinedStreamUrl();
       const body: LegWriteBody = {
         id: form.id.trim(),
         renditionId: form.renditionId,
@@ -271,7 +323,9 @@ function LegForm({
         enabled: form.enabled,
         ...(form.type === "local-file"
           ? { outputDir: form.outputDir.trim(), filenamePattern: form.filenamePattern.trim() }
-          : { destinationUrlEnv: form.destinationUrlEnv.trim(), ...(form.secretValue.trim() ? { secretValue: form.secretValue.trim() } : {}) }),
+          : streamUrl
+            ? { secretValue: streamUrl }
+            : {}),
       };
       await onSubmit(body);
     } catch (err) {
@@ -298,10 +352,10 @@ function LegForm({
         </select>
       </label>
       <label>
-        Type
+        Send this to
         <select value={form.type} onChange={(e) => set("type", e.target.value as "local-file" | "rtmp-push")} disabled={isEditing}>
-          <option value="local-file">Local file (archive)</option>
-          <option value="rtmp-push">RTMP push (platform)</option>
+          <option value="local-file">A local file on this machine</option>
+          <option value="rtmp-push">A streaming platform (Twitch, YouTube, Kick, etc.)</option>
         </select>
       </label>
       <div className="form-row">
@@ -327,21 +381,25 @@ function LegForm({
         </>
       ) : (
         <>
+          <p className="muted">
+            Get these from that platform's own stream/creator dashboard (e.g. Twitch → Creator Dashboard → Settings → Stream) — most
+            platforms show the server and stream key as two separate fields there, same as here.
+          </p>
           <label>
-            Destination env var name
+            RTMP server
             <input
-              value={form.destinationUrlEnv}
-              onChange={(e) => set("destinationUrlEnv", e.target.value)}
-              placeholder="e.g. ONEENCODE_PLATFORM_A_URL"
+              value={form.rtmpServer}
+              onChange={(e) => set("rtmpServer", e.target.value)}
+              placeholder="rtmp://live.twitch.tv/app"
             />
           </label>
           <label>
-            Stream URL / key {isEditing && <span className="muted">({secretCurrentlySet ? "currently set — " : "not set — "}leave blank to keep as-is)</span>}
+            Stream key {isEditing && <span className="muted">({secretCurrentlySet ? "currently set — " : "not set — "}leave blank to keep as-is)</span>}
             <input
               type="password"
-              value={form.secretValue}
-              onChange={(e) => set("secretValue", e.target.value)}
-              placeholder="rtmp://ingest.example.com/live/STREAM_KEY"
+              value={form.streamKey}
+              onChange={(e) => set("streamKey", e.target.value)}
+              placeholder="live_XXXXXXXX_XXXXXXXXXXXXXXXXXXXXXXXXXXXX"
               autoComplete="new-password"
             />
           </label>
@@ -362,6 +420,7 @@ function LegForm({
 
 export function ConfigManager({ token, onConfigChanged }: { token: string; onConfigChanged: () => void }) {
   const [config, setConfig] = useState<ConfigResponse | null>(null);
+  const [platformProfiles, setPlatformProfiles] = useState<PlatformProfile[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [editingRenditionId, setEditingRenditionId] = useState<string | null>(null);
   const [addingRendition, setAddingRendition] = useState(false);
@@ -378,6 +437,9 @@ export function ConfigManager({ token, onConfigChanged }: { token: string; onCon
   };
 
   useEffect(() => {
+    fetchPlatformProfiles(token)
+      .then(setPlatformProfiles)
+      .catch(() => setPlatformProfiles([])); // optional convenience data -- a fetch failure shouldn't block config management
     void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
@@ -407,6 +469,7 @@ export function ConfigManager({ token, onConfigChanged }: { token: string; onCon
         {addingRendition && (
           <RenditionForm
             initial={blankRenditionForm()}
+            platformProfiles={platformProfiles}
             onCancel={() => setAddingRendition(false)}
             onSubmit={async (body) => {
               await createRendition(token, body);
@@ -456,6 +519,7 @@ export function ConfigManager({ token, onConfigChanged }: { token: string; onCon
                     <td colSpan={6}>
                       <RenditionForm
                         initial={renditionToForm(r)}
+                        platformProfiles={platformProfiles}
                         onCancel={() => setEditingRenditionId(null)}
                         onSubmit={async (body) => {
                           await updateRendition(token, r.id, body);

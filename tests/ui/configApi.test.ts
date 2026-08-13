@@ -163,6 +163,31 @@ describe("POST /api/config/renditions", () => {
   });
 });
 
+describe("GET /api/config/platform-profiles", () => {
+  it("returns an empty list rather than erroring when platformProfiles.yaml doesn't exist", async () => {
+    const res = await fetch(`${baseUrl}/platform-profiles`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.platforms).toEqual([]);
+  });
+
+  it("returns the platforms array when the file is present", async () => {
+    const PLATFORM_PROFILES_PATH = path.resolve(process.cwd(), "config/platformProfiles.yaml").replace(/\\/g, "/");
+    files.set(
+      PLATFORM_PROFILES_PATH,
+      yaml.dump({
+        platforms: [
+          { platformName: "Twitch", recommended: { resolution: { width: 1920, height: 1080 }, fps: 60, videoBitrateKbps: 6000, audioBitrateKbps: 160, keyframeIntervalSec: 2 } },
+        ],
+      }),
+    );
+    const res = await fetch(`${baseUrl}/platform-profiles`);
+    const body = await res.json();
+    expect(body.platforms).toHaveLength(1);
+    expect(body.platforms[0].platformName).toBe("Twitch");
+  });
+});
+
 describe("DELETE /api/config/renditions/:id", () => {
   it("refuses to delete a rendition still referenced by a leg", async () => {
     const res = await fetch(`${baseUrl}/renditions/shared-1080p60`, { method: "DELETE" });
@@ -201,6 +226,46 @@ describe("POST /api/config/legs", () => {
       body: JSON.stringify({ id: "orphan-leg", renditionId: "does-not-exist", type: "local-file", outputDir: "recordings" }),
     });
     expect(res.status).toBe(400);
+  });
+
+  it("derives destinationUrlEnv from the leg id when the UI doesn't send one", async () => {
+    const res = await fetch(`${baseUrl}/legs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "twitch-main",
+        renditionId: "shared-1080p60",
+        type: "rtmp-push",
+        secretValue: "rtmp://real.example.com/live/A_KEY",
+      }),
+    });
+    expect(res.status).toBe(200);
+    const legsYaml = files.get(LEGS_LOCAL_PATH) as string;
+    expect(legsYaml).toContain("ONEENCODE_TWITCH_MAIN_URL");
+  });
+});
+
+describe("PUT /api/config/legs/:id", () => {
+  it("preserves the existing destinationUrlEnv on edit instead of re-deriving it (would orphan the stored secret)", async () => {
+    const configWithRtmpLeg = {
+      ...BASE_CONFIG,
+      legs: [
+        ...BASE_CONFIG.legs,
+        { id: "platform-a", enabled: true, renditionId: "shared-1080p60", priority: 5, type: "rtmp-push", destinationUrlEnv: "ONEENCODE_PLATFORM_A_URL" },
+      ],
+    };
+    files.set(LEGS_LOCAL_PATH, yaml.dump(configWithRtmpLeg));
+    files.set(SECRETS_LOCAL_PATH, yaml.dump({ ONEENCODE_PLATFORM_A_URL: "rtmp://real.example.com/live/KEY" }));
+
+    const res = await fetch(`${baseUrl}/legs/platform-a`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ renditionId: "shared-1080p60", type: "rtmp-push", priority: 9 }),
+    });
+    expect(res.status).toBe(200);
+    const legsYaml = files.get(LEGS_LOCAL_PATH) as string;
+    expect(legsYaml).toContain("ONEENCODE_PLATFORM_A_URL");
+    expect(legsYaml).not.toContain("ONEENCODE_PLATFORM-A_URL");
   });
 });
 
