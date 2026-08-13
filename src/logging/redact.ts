@@ -22,19 +22,25 @@ export function redactUrl(url: string): string {
 }
 
 const SECRET_KEY_PATTERN = /url|key|token|password|secret|destination/i;
-const RTMP_URL_PATTERN = /^rtmps?:\/\//i;
 
 /**
  * Redacts a single string value: any rtmp(s):// URL is redacted regardless
  * of where it appears (an object property, a bare array element like an
- * ffmpeg argv token, etc.) — this is deliberately NOT limited to values
- * sitting directly under a secret-sounding key, because argv arrays carry
- * destination URLs as plain positional elements with no key name at all.
+ * ffmpeg argv token, an embedded substring inside a larger free-text line
+ * like ffmpeg's own stderr output, etc.) — this is deliberately NOT anchored
+ * to the start of the string and NOT limited to values sitting directly
+ * under a secret-sounding key, because argv arrays carry destination URLs as
+ * plain positional elements with no key name at all, and ffmpeg's error
+ * messages embed the destination URL mid-sentence (e.g. "Error opening
+ * output rtmps://host/KEY: I/O error") rather than as the whole string —
+ * an earlier anchored (`^rtmps?://`) version of this pattern missed exactly
+ * that case and let a real Kick stream key reach a log file in plaintext.
  * A secret-sounding key holding a non-URL string (a bare token) is masked
  * outright as a second, narrower line of defense.
  */
 function redactString(value: string, key?: string): string {
-  if (RTMP_URL_PATTERN.test(value)) return redactUrl(value);
+  const replaced = value.replace(/rtmps?:\/\/[^\s"']+/gi, (match) => redactUrl(match));
+  if (replaced !== value) return replaced;
   if (key && SECRET_KEY_PATTERN.test(key)) return "***REDACTED***";
   return value;
 }

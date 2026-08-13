@@ -23,7 +23,8 @@
     "investigate:jitter-threadqueue": "tsx scripts/jitterThreadQueueTest.ts",
     "web:install": "cd web && npm install",
     "web:build": "cd web && npm run build",
-    "web:dev": "cd web && npm run dev"
+    "web:dev": "cd web && npm run dev",
+    "package:win": "pwsh -File scripts/package-win.ps1"
   },
   "dependencies": {
     "express": "^5.2.1",
@@ -36,6 +37,8 @@
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.10.2",
     "@types/ws": "^8.18.1",
+    "esbuild": "^0.28.2",
+    "postject": "^1.0.0-alpha.6",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^4.1.10"

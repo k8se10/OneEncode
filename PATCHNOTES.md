@@ -1,5 +1,30 @@
 # PATCHNOTES
 
+## v0.13.0 — standalone Windows exe for the streaming PC (no Node.js install required)
+
+Requested directly by the user to deploy OneEncode on the dedicated streaming PC (CLAUDE.md's primary dual-PC target) without installing Node.js there.
+
+### Added
+- `scripts/package-win.ps1` (`npm run package:win`): bundles the ESM backend to a single CJS file (esbuild, since this project is `"type": "module"` and Node's Single Executable Application feature wants one entry file), generates a SEA blob, copies the locally-installed `node.exe`, strips its Authenticode signature (required before injection — auto-locates `signtool.exe` under the Windows SDK path), and injects the blob via `postject` to produce `oneencode.exe`.
+- `oneencode.exe` resolves `config/`, `tools/mediamtx/`, and `web/dist/` relative to its *working directory*, same as the normal `tsx src/index.ts` entrypoint (nothing in the codebase used `__dirname`/`import.meta.url`-relative paths, which is what made this straightforward) — so it can be dropped anywhere alongside those folders and run standalone. ffmpeg remains a separate required install on the target machine (never bundled, per §6's licensing/redistribution stance) — `tools/mediamtx/` and `web/dist/` are copied alongside it since those *are* this project's own build output, not a third-party redistribution concern.
+- New dev dependencies: `esbuild`, `postject`.
+
+### Verified
+Smoke-tested the packaged exe standalone (no `node_modules`, no Node install in the test directory) twice: (1) in a directory with no `config/` present — correctly hit the same `config_validation_error` path as the normal dev entrypoint and exited cleanly; (2) in a directory staged with the real `config/`, `tools/mediamtx/`, and `web/dist/` — correctly started MediaMTX, loaded all 3 real renditions, exercised the NVENC session-limit fallback (correctly fell back `kick-1080p60` to `h264_amf` under a conservative default ceiling), and retried the ingest connection with proper backoff (no OBS was live during this test, which is the expected/correct behavior — no destination legs run without frames). Confirmed clean shutdown with no orphaned `mediamtx.exe`/`ffmpeg.exe` processes.
+
+## v0.12.0 — fix: real secret leaked into a log file (ffmpeg stderr not redacted mid-string)
+
+**Found during the first real 3-platform test.** Kick's RTMPS leg failed (see the TLS connectivity note logged separately) and its ffmpeg process's own stderr output — `"Error opening output rtmps://host/KEY: I/O error"` — was logged to disk with the **real Kick stream key in plaintext**, directly violating CLAUDE.md §2A's mandatory redaction rule ("any destination URL that might contain a stream key must be passed through a redaction helper before it is ever written to a log line").
+
+### Root cause
+`src/logging/redact.ts`'s URL-matching regex was anchored to the start of the string (`^rtmps?:\/\//`). That correctly redacts a bare URL value (an argv array element, e.g.) but misses a URL **embedded mid-sentence** inside a longer string — exactly the shape of ffmpeg's own error messages, which is not a case the original test suite exercised (its coverage was whole-string/array-element values only).
+
+### Fixed
+`redactString` now does an unanchored, global search-and-replace for any `rtmps?://` occurrence anywhere in a string, not just when the whole string is one. Added a regression test using the actual leaked-line shape. All existing redaction tests still pass unchanged.
+
+### Cleanup
+The scratch log file this session's test run wrote to (`oneencode-run.log`, gitignored, never staged) contained the leaked key 10 times and was deleted outright rather than redacted in place. Confirmed via search that no other log file (`logs/*.jsonl`, the Bash tool's own background-task capture files) picked it up.
+
 ## v0.11.0 — broadcast arm switch: manual gate before any rtmp-push leg starts
 
 Ahead of the first real 3-platform test (Kick, Twitch, YouTube configured with real credentials), added a deliberate safety gate so a config with `enabled: true` platform legs can never silently start broadcasting the moment the orchestrator boots.

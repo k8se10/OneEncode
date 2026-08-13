@@ -26,4 +26,18 @@ describe("redactObject", () => {
     expect(JSON.stringify(result)).not.toContain("abc123");
     expect(result.legId).toBe("platform-a");
   });
+
+  it("redacts an rtmp(s):// URL embedded mid-sentence in free text, not just a bare whole-string value", () => {
+    // Regression test: a real Kick stream key reached oneencode-run.log in
+    // plaintext because ffmpeg's own stderr lines embed the destination URL
+    // inside a longer message ("Error opening output rtmps://host/KEY: I/O
+    // error") rather than as the whole line — an earlier anchored
+    // (^rtmps?://) pattern only caught the whole-string case.
+    const line =
+      "[out#0/flv @ 0x1] Error opening output rtmps://REDACTED-HOST.global-contribute.live-video.net/sk_us-west-2_REAL_SECRET: I/O error";
+    const result = redactObject(line);
+    expect(result).not.toContain("sk_us-west-2_REAL_SECRET");
+    expect(result).toContain("REDACTED-HOST.global-contribute.live-video.net");
+    expect(result).toContain("***REDACTED***");
+  });
 });

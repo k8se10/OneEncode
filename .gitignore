@@ -1,5 +1,8 @@
 node_modules/
 dist/
+dist-pkg/
+dist-release/
+oneencode.exe
 
 # Real per-machine config and secrets — never commit.
 # Deliberately narrow (not "config/secrets*.yaml") so committed templates
