@@ -1,5 +1,16 @@
 # PATCHNOTES
 
+## v0.14.0 — fix: bundled ffmpeg wasn't found by the packaged exe; a spawn failure crashed the whole orchestrator
+
+Found while actually bundling ffmpeg.exe alongside `oneencode.exe` for a personal streaming-PC transfer (not a public-repo redistribution — see CLAUDE.md §6/§2A additions).
+
+### Fixed
+- **`spawn ffmpeg ENOENT` even with `ffmpeg.exe` sitting right next to `oneencode.exe`.** `child_process.spawn` on Windows resolves a bare command name ("ffmpeg") only via the `PATH` env var — unlike Windows' own `CreateProcess`, it does *not* also fall back to checking the launching process's own directory. `src/index.ts` now prepends `path.dirname(process.execPath)` to `PATH` on Windows at startup, which is a no-op in normal dev (`process.execPath` is just `node.exe`'s own location there) but correctly resolves a co-located `ffmpeg.exe` when running the packaged exe (`process.execPath` is the exe itself in that case).
+- **A spawn failure crashed the entire orchestrator, not just the one leg** — `spawnLegProcess` (`src/legs/legProcess.ts`) had no `"error"` handler on the child process, so an `ENOENT` (or any spawn-time failure) was an unhandled exception that killed every other leg along with it, directly undermining the per-leg failure isolation CLAUDE.md §5 exists to guarantee. Now treated as a normal (if distinct — `spawnError` field added to the `leg_exit` log event) exit, so the existing restart/backoff loop in `health/monitor.ts` handles it like any other failure. Regression test added (`tests/legs/legProcess.test.ts`) simulating the ENOENT case via a mocked `child_process.spawn`.
+
+### Verified
+Rebuilt `oneencode.exe`, re-ran the standalone smoke test with chocolatey's `ffmpeg` deliberately removed from `PATH` (so only the bundled copy could satisfy it) — confirmed it now spawns the bundled `ffmpeg.exe` and reaches the expected "no OBS live" ffmpeg error, instead of `ENOENT`. Full test suite (123/123) and typecheck clean.
+
 ## v0.13.0 — standalone Windows exe for the streaming PC (no Node.js install required)
 
 Requested directly by the user to deploy OneEncode on the dedicated streaming PC (CLAUDE.md's primary dual-PC target) without installing Node.js there.

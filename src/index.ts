@@ -1,7 +1,26 @@
+import path from "node:path";
 import { loadConfig, ConfigError } from "./config/load.js";
 import { logEvent } from "./logging/logger.js";
 import { startPipeline } from "./pipeline.js";
 import { startUiServer } from "./ui/server.js";
+
+/**
+ * When running as the packaged standalone exe (npm run package:win),
+ * ffmpeg.exe may be dropped in the same directory as the exe rather than
+ * installed system-wide (see scripts/package-win.ps1). child_process.spawn
+ * on Windows resolves a bare command name ("ffmpeg") ONLY via the PATH env
+ * var — unlike Windows' own CreateProcess, it does NOT also fall back to
+ * checking the launching process's own directory, so a co-located
+ * ffmpeg.exe silently isn't found (confirmed: bundling it next to the exe
+ * alone produced "spawn ffmpeg ENOENT"). Prepending process.execPath's
+ * directory to PATH here fixes that. In a normal `tsx src/index.ts` dev run
+ * process.execPath is just node.exe's own location, so this is a harmless
+ * no-op there — it only does something useful for the packaged exe, where
+ * process.execPath correctly points at the exe itself.
+ */
+if (process.platform === "win32") {
+  process.env.PATH = `${path.dirname(process.execPath)};${process.env.PATH ?? ""}`;
+}
 
 /**
  * Orchestrator entrypoint. Pipeline-building logic lives in src/pipeline.ts

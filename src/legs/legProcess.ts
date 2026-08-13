@@ -68,6 +68,35 @@ export function spawnLegProcess(
   });
 
   const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    let settled = false;
+    const settleOnce = (code: number | null, signal: NodeJS.Signals | null) => {
+      if (settled) return;
+      settled = true;
+      resolve({ code, signal });
+    };
+
+    // A spawn failure (e.g. the binary isn't on PATH) emits "error" instead
+    // of "exit" — the process never actually started. Left unhandled, this
+    // is an uncaught exception that crashes the ENTIRE orchestrator, not
+    // just this one leg, defeating the whole point of per-leg failure
+    // isolation (CLAUDE.md §5). Treat it as a normal (if unusual) exit so
+    // the existing restart/backoff loop in health/monitor.ts picks it up
+    // like any other failure, instead of taking every other leg down with it.
+    child.on("error", (err) => {
+      rl.close();
+      logEvent({
+        event: "leg_exit",
+        legId,
+        exitCode: null,
+        signal: null,
+        uptimeMs: Date.now() - startedAt,
+        wasExpected: expectedExit,
+        spawnError: err.message,
+      });
+      console.error(`[oneencode] leg "${legId}" failed to start: ${err.message}`);
+      settleOnce(null, null);
+    });
+
     child.on("exit", (code, signal) => {
       rl.close();
       logEvent({
@@ -82,7 +111,7 @@ export function spawnLegProcess(
         const redactedTail = stderrTail.map((line) => redactObject(line));
         console.error(`[oneencode] leg "${legId}" exited with code ${code} — last stderr lines:\n${redactedTail.join("\n")}`);
       }
-      resolve({ code, signal });
+      settleOnce(code, signal);
     });
   });
 

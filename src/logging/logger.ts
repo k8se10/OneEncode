@@ -16,7 +16,16 @@ export type LogEvent =
       dupFrames: number;
       speed: number;
     }
-  | { event: "leg_exit"; legId: string; exitCode: number | null; signal: string | null; uptimeMs: number; wasExpected: boolean }
+  | {
+      event: "leg_exit";
+      legId: string;
+      exitCode: number | null;
+      signal: string | null;
+      uptimeMs: number;
+      wasExpected: boolean;
+      /** Set when the process never actually started (e.g. ENOENT — the binary isn't on PATH) rather than started and exited. */
+      spawnError?: string;
+    }
   | { event: "leg_restart"; legId: string; attemptNumber: number; backoffMs: number; reason: string }
   | { event: "leg_failed_permanent"; legId: string; totalRestarts: number; lastExitCode: number | null }
   | { event: "encoder_fallback"; legId: string; requestedEncoder: string; actualEncoder: string; reason: string }
