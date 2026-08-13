@@ -1,16 +1,15 @@
 import type { RootConfig } from "./config/schema.js";
 import type { ResolvedDestinations } from "./config/load.js";
 import { startRelayServer, stopRelayServer, type RelayServerHandle } from "./ingest/relayServer.js";
-import { startDecodeRelay, type DecodeRelayController } from "./ingest/decodeRelay.js";
-import { buildCopyArgv } from "./legs/argvBuilder.js";
+import { startCombinedRelay, buildCombinedEncodeArgv, type CombinedEncodeController } from "./ingest/decodeRelay.js";
+import { buildCopyArgv, type RenditionEncodeTarget } from "./legs/argvBuilder.js";
 import { superviseLeg, type LegSupervisor } from "./health/monitor.js";
 import { groupLegsByRendition, buildRenditionUrl } from "./rendition/group.js";
-import { startRenditionEncode, buildRenditionEncodeArgv } from "./rendition/renditionProcess.js";
 import { resolveOutputPath } from "./destinations/localFileDestination.js";
 import { resolveRtmpDestination } from "./destinations/rtmpDestination.js";
 import { loadProbedCeiling, NvencSessionTracker, selectEncoder, isNvencEncoder } from "./nvenc/sessionTracker.js";
 
-/** A leg's or rendition's recreate-on-demand descriptor, so a manual restart doesn't need the whole pipeline rebuilt. */
+/** A managed leg's recreate-on-demand descriptor, so a manual restart doesn't need the whole pipeline rebuilt. */
 interface Managed {
   id: string;
   encoderLabel: string;
@@ -20,50 +19,45 @@ interface Managed {
 
 export interface RunningPipeline {
   relay: RelayServerHandle;
-  decodeRelay: DecodeRelayController;
+  /**
+   * The single combined process: decode-once, plus the relay's own
+   * mezzanine re-encode, plus every unique rendition's encode — all from
+   * that one decode (see argvBuilder.ts's buildCombinedRelayAndRenditionsArgv).
+   * Stopping/restarting this affects the relay and every rendition
+   * together; it's managed under id "relay" via stopManaged/restartManaged
+   * below, same as before this was combined.
+   */
+  combinedEncode: CombinedEncodeController;
   /** Destination leg ids (the stream-copy processes), for callers that want per-leg stats analysis (e.g. benchmark scripts). */
   legIds: string[];
-  /** Rendition-encode process ids ("rendition-<id>"), same purpose as legIds above. */
-  renditionLegIds: string[];
   /** legId -> live supervisor, for callers (e.g. the dashboard) that need to look up a specific leg's current state. */
   legSupervisorsById: Map<string, LegSupervisor>;
-  /** "rendition-<id>" -> live supervisor, same purpose as legSupervisorsById above. */
-  renditionSupervisorsById: Map<string, LegSupervisor>;
   config: RootConfig;
-  /** Stops a leg or rendition-encode by id without restarting it. */
+  /** Stops a leg or the combined encode process ("relay") by id without restarting it. */
   stopManaged(id: string): Promise<void>;
-  /** Stops (if running) and respawns a fresh supervised process for a leg or rendition-encode by id — e.g. a manual dashboard "restart" action. */
+  /** Stops (if running) and respawns a fresh supervised process for a leg or the combined encode process by id — e.g. a manual dashboard "restart" action. */
   restartManaged(id: string): Promise<void>;
   stopAll(): Promise<void>;
 }
 
 /**
- * Builds and starts the full two-stage pipeline: relay server, decode/relay
- * process, one supervised encode per unique rendition actually referenced
- * by an enabled leg, and one supervised stream-copy process per leg. Shared
- * by src/index.ts (real operation) and scripts/benchOneEncode.ts (so the
- * benchmark exercises the exact same code path as production, not a
- * reimplementation of it).
+ * Builds and starts the full pipeline: relay server, the combined decode+
+ * relay+rendition-encode process, and one supervised stream-copy process
+ * per destination leg. Shared by src/index.ts (real operation) and
+ * scripts/benchOneEncode.ts (so the benchmark exercises the exact same
+ * code path as production, not a reimplementation of it).
  */
 export async function startPipeline(config: RootConfig, destinations: ResolvedDestinations): Promise<RunningPipeline> {
   console.log(`[oneencode] starting relay server...`);
   const relay: RelayServerHandle = startRelayServer();
   await relay.ready;
 
-  console.log(`[oneencode] starting decode/relay process (pulling ${config.ingest.listenUrl})...`);
-  const decodeRelay: DecodeRelayController = startDecodeRelay(config);
-  await decodeRelay.ready;
-  console.log(`[oneencode] decode/relay is producing frames — starting renditions`);
-
   const { ceiling: nvencCeiling } = loadProbedCeiling();
   const nvencTracker = new NvencSessionTracker(nvencCeiling);
   if (isNvencEncoder(config.relay.encoder)) nvencTracker.reserve();
 
   const legsByRendition = groupLegsByRendition(config.legs);
-  const legIds: string[] = [];
-  const renditionLegIds: string[] = [];
-  const managedById = new Map<string, Managed>();
-
+  const renditionTargets: RenditionEncodeTarget[] = [];
   for (const [renditionId, legsForRendition] of legsByRendition) {
     const rendition = config.renditions.find((r) => r.id === renditionId);
     if (!rendition) {
@@ -74,25 +68,26 @@ export async function startPipeline(config: RootConfig, destinations: ResolvedDe
     const encoder = selectEncoder(`rendition-${renditionId}`, rendition.encoderPreference, nvencTracker);
     console.log(
       `[oneencode] rendition "${renditionId}": ${legsForRendition.length} leg(s) sharing this encode ` +
-        `(${legsForRendition.map((l) => l.id).join(", ")})`,
+        `(${legsForRendition.map((l) => l.id).join(", ")}), encoder ${encoder}`,
     );
-    const renditionLegId = `rendition-${renditionId}`;
-    // Re-selecting the encoder on every (re)spawn would double-reserve
-    // NVENC tracker slots across manual restarts — the tracker's
-    // reservation lifetime is intentionally scoped to startup only (see
-    // CLAUDE.md architecture decision #4's noted simplification), so a
-    // manual restart rebuilds the same argv with the originally-selected
-    // encoder rather than re-running selection.
-    const renditionBuildArgv = () => buildRenditionEncodeArgv(config, rendition, encoder);
-    const renditionSupervisor = startRenditionEncode(config, rendition, encoder);
-    managedById.set(renditionLegId, {
-      id: renditionLegId,
-      encoderLabel: encoder,
-      buildArgv: renditionBuildArgv,
-      supervisor: renditionSupervisor,
-    });
-    renditionLegIds.push(renditionLegId);
+    renditionTargets.push({ rendition, encoder, outputUrl: buildRenditionUrl(config.relay.url, renditionId) });
+  }
 
+  console.log(`[oneencode] starting combined decode/relay/rendition-encode process (pulling ${config.ingest.listenUrl})...`);
+  const combinedEncode = startCombinedRelay(config, renditionTargets);
+  await combinedEncode.ready;
+  console.log(`[oneencode] combined encode is producing frames — starting destination legs`);
+
+  const legIds: string[] = [];
+  const managedById = new Map<string, Managed>();
+  managedById.set("relay", {
+    id: "relay",
+    encoderLabel: config.relay.encoder,
+    buildArgv: () => buildCombinedEncodeArgv(config, renditionTargets),
+    supervisor: combinedEncode,
+  });
+
+  for (const [renditionId, legsForRendition] of legsByRendition) {
     const renditionUrl = buildRenditionUrl(config.relay.url, renditionId);
     for (const leg of legsForRendition) {
       const buildArgv = () => {
@@ -113,7 +108,7 @@ export async function startPipeline(config: RootConfig, destinations: ResolvedDe
     }
   }
 
-  console.log(`[oneencode] ${renditionLegIds.length} rendition(s), ${legIds.length} leg(s) starting.`);
+  console.log(`[oneencode] ${renditionTargets.length} rendition(s) inside the combined encode, ${legIds.length} leg(s) starting.`);
 
   function asMap(ids: string[]): Map<string, LegSupervisor> {
     return new Map(ids.map((id) => [id, managedById.get(id)!.supervisor]));
@@ -121,24 +116,20 @@ export async function startPipeline(config: RootConfig, destinations: ResolvedDe
 
   return {
     relay,
-    decodeRelay,
+    combinedEncode,
     legIds,
-    renditionLegIds,
     get legSupervisorsById() {
       return asMap(legIds);
-    },
-    get renditionSupervisorsById() {
-      return asMap(renditionLegIds);
     },
     config,
     stopManaged: async (id: string) => {
       const managed = managedById.get(id);
-      if (!managed) throw new Error(`No managed leg/rendition with id "${id}"`);
+      if (!managed) throw new Error(`No managed leg/process with id "${id}"`);
       await managed.supervisor.stop();
     },
     restartManaged: async (id: string) => {
       const managed = managedById.get(id);
-      if (!managed) throw new Error(`No managed leg/rendition with id "${id}"`);
+      if (!managed) throw new Error(`No managed leg/process with id "${id}"`);
       await managed.supervisor.stop();
       const fresh = superviseLeg({
         legId: managed.id,
@@ -150,8 +141,7 @@ export async function startPipeline(config: RootConfig, destinations: ResolvedDe
     },
     stopAll: async () => {
       await Promise.all(legIds.map((id) => managedById.get(id)!.supervisor.stop()));
-      await Promise.all(renditionLegIds.map((id) => managedById.get(id)!.supervisor.stop()));
-      await decodeRelay.stop();
+      await managedById.get("relay")!.supervisor.stop();
       stopRelayServer(relay);
     },
   };

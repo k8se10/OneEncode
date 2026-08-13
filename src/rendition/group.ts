@@ -2,7 +2,8 @@ import type { LegConfig } from "../config/schema.js";
 
 /**
  * Groups enabled legs by the rendition they reference. Legs sharing a
- * renditionId share exactly one encode process (see renditionProcess.ts) —
+ * renditionId share exactly one encode branch within the combined process
+ * (see src/legs/argvBuilder.ts's buildCombinedRelayAndRenditionsArgv) —
  * this is the dedup mechanism itself, kept as a small pure function so it's
  * trivially unit-testable independent of any process-spawning glue.
  */

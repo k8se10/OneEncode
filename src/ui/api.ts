@@ -6,11 +6,12 @@ import { redactObject } from "../logging/redact.js";
 /**
  * REST API for the local dashboard. V1 scope (documented, not silently
  * short of the original plan): live status/health monitoring and
- * start/stop/restart controls for already-configured legs/renditions.
- * Adding/editing/removing legs through the UI (full CRUD) is NOT built yet
- * — config changes still go through hand-editing config/legs.local.yaml +
- * an orchestrator restart, same as before this dashboard existed. See
- * CLAUDE.md architecture decision #8 for the full scope note.
+ * start/stop/restart controls for already-configured legs and the shared
+ * encode pipeline. Adding/editing/removing legs through the UI (full CRUD)
+ * is NOT built yet — config changes still go through hand-editing
+ * config/legs.local.yaml + an orchestrator restart, same as before this
+ * dashboard existed. See CLAUDE.md architecture decision #8 for the full
+ * scope note.
  */
 export function createApiRouter(pipeline: RunningPipeline, liveState: LiveStateTracker): Router {
   const router = Router();
@@ -27,17 +28,25 @@ export function createApiRouter(pipeline: RunningPipeline, liveState: LiveStateT
       };
     });
 
+    // Every rendition now shares ONE combined encode process with the relay
+    // (see src/pipeline.ts, task #24) — there's no independent per-rendition
+    // supervisor anymore, so `state` reflects that shared process for every
+    // rendition. `stats` can't come from the combined process's own -stats
+    // output either: ffmpeg reports one aggregate progress line for a
+    // multi-output command, not one per branch. A rendition's first enabled
+    // leg is an exact stand-in instead — it's a `-c copy` of that rendition's
+    // real bytes, so its stats are that rendition's real delivered stats.
+    const encodeState = pipeline.combinedEncode.getState();
     const renditions = pipeline.config.renditions.map((rendition) => {
-      const legId = `rendition-${rendition.id}`;
-      const supervisor = pipeline.renditionSupervisorsById.get(legId);
+      const legForRendition = pipeline.config.legs.find((leg) => leg.enabled && leg.renditionId === rendition.id);
       return {
         ...rendition, // renditions never contain secrets — resolution/fps/bitrate/codec only
-        state: supervisor?.getState() ?? "unknown",
-        stats: snapshot.get(legId) ?? null,
+        state: encodeState,
+        stats: legForRendition ? (snapshot.get(legForRendition.id) ?? null) : null,
       };
     });
 
-    res.json({ legs, renditions });
+    res.json({ legs, renditions, encode: { state: encodeState } });
   });
 
   router.post("/legs/:id/stop", async (req, res) => {
@@ -58,18 +67,22 @@ export function createApiRouter(pipeline: RunningPipeline, liveState: LiveStateT
     }
   });
 
-  router.post("/renditions/:id/stop", async (req, res) => {
+  // The relay and every rendition share one process (task #24) — these two
+  // routes act on that shared process, not on any one rendition. There is
+  // deliberately no per-rendition stop/restart anymore; that would imply an
+  // independence that no longer exists.
+  router.post("/encode/stop", async (_req, res) => {
     try {
-      await pipeline.stopManaged(`rendition-${req.params.id}`);
+      await pipeline.stopManaged("relay");
       res.json({ ok: true });
     } catch (err) {
       res.status(404).json({ error: err instanceof Error ? err.message : String(err) });
     }
   });
 
-  router.post("/renditions/:id/restart", async (req, res) => {
+  router.post("/encode/restart", async (_req, res) => {
     try {
-      await pipeline.restartManaged(`rendition-${req.params.id}`);
+      await pipeline.restartManaged("relay");
       res.json({ ok: true });
     } catch (err) {
       res.status(404).json({ error: err instanceof Error ? err.message : String(err) });

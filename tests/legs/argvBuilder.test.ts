@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildEncodeArgv, buildCopyArgv, buildRelayArgv } from "../../src/legs/argvBuilder.js";
+import {
+  buildEncodeArgv,
+  buildCopyArgv,
+  buildRelayArgv,
+  buildCombinedRelayAndRenditionsArgv,
+  type RenditionEncodeTarget,
+} from "../../src/legs/argvBuilder.js";
 import type { Rendition } from "../../src/config/schema.js";
 
 const baseRendition = {
@@ -127,5 +133,116 @@ describe("buildRelayArgv", () => {
     expect(argv).not.toContain("p1");
     expect(argv).toContain("-quality");
     expect(argv).toContain("speed");
+  });
+});
+
+describe("buildCombinedRelayAndRenditionsArgv", () => {
+  const relayOpts = { encoder: "h264_nvenc" as const, preset: "p1", bitrateKbps: 40000 };
+
+  it("falls back to buildRelayArgv exactly when there are no rendition targets", () => {
+    const combined = buildCombinedRelayAndRenditionsArgv(
+      "rtmp://127.0.0.1:1935/ingest/live",
+      "rtmp://127.0.0.1:1935/relay/live",
+      relayOpts,
+      [],
+    );
+    const plain = buildRelayArgv("rtmp://127.0.0.1:1935/ingest/live", "rtmp://127.0.0.1:1935/relay/live", relayOpts);
+    expect(combined).toEqual(plain);
+    expect(combined).not.toContain("-filter_complex");
+  });
+
+  it("decodes once and splits into a relay branch plus one branch per rendition — task #24 fix", () => {
+    // Deliberately mixes: one rendition that needs scaling (1080p) on NVENC,
+    // one at source resolution (no scale filter should appear for it) on AMF
+    // — exercises both the scale/no-scale split and per-encoder-family argv
+    // in the same command, since that's exactly what a real multi-rendition
+    // pipeline looks like.
+    const rendition1080p: Rendition = {
+      id: "1080p",
+      resolution: { width: 1920, height: 1080 },
+      fps: 60,
+      videoBitrateKbps: 6000,
+      audioBitrateKbps: 160,
+      keyframeIntervalSec: 2,
+      encoderPreference: ["h264_nvenc"],
+    };
+    const renditionSource: Rendition = {
+      id: "source-res",
+      resolution: "source",
+      fps: 60,
+      videoBitrateKbps: 3500,
+      audioBitrateKbps: 128,
+      keyframeIntervalSec: 2,
+      encoderPreference: ["h264_amf"],
+    };
+    const targets: RenditionEncodeTarget[] = [
+      { rendition: rendition1080p, encoder: "h264_nvenc", outputUrl: "rtmp://127.0.0.1:1935/rendition/1080p/live" },
+      { rendition: renditionSource, encoder: "h264_amf", outputUrl: "rtmp://127.0.0.1:1935/rendition/source-res/live" },
+    ];
+
+    const argv = buildCombinedRelayAndRenditionsArgv(
+      "rtmp://127.0.0.1:1935/ingest/live",
+      "rtmp://127.0.0.1:1935/relay/live",
+      relayOpts,
+      targets,
+    );
+
+    // Single decode, single -i — the whole point of the fix.
+    expect(argv.filter((tok) => tok === "-i")).toHaveLength(1);
+
+    const filterIdx = argv.indexOf("-filter_complex");
+    expect(filterIdx).toBeGreaterThan(-1);
+    const filterComplex = argv[filterIdx + 1];
+    expect(filterComplex).toContain("split=3"); // relay + 2 renditions, one decode
+    expect(filterComplex).toContain("scale=1920:1080"); // only the 1080p branch scales
+    expect(filterComplex.match(/scale=/g)).toHaveLength(1); // source-res branch must NOT get a scale filter
+
+    // 3 outputs total (relay + 2 renditions) => audio mapped 3 times, one encoder instance each.
+    expect(argv.filter((tok) => tok === "0:a")).toHaveLength(3);
+    expect(argv.filter((tok) => tok === "-map")).toHaveLength(6); // one video + one audio map per output
+
+    // Relay branch: published unchanged, low-latency NVENC flags present.
+    expect(argv).toContain("rtmp://127.0.0.1:1935/relay/live");
+    expect(argv).toContain("-tune");
+    expect(argv).toContain("ull");
+
+    // 1080p rendition branch: NVENC bitrate-mode flags, published to its own rendition URL.
+    expect(argv).toContain("rtmp://127.0.0.1:1935/rendition/1080p/live");
+    const nvencBitrateIdx = argv.indexOf("6000k");
+    expect(nvencBitrateIdx).toBeGreaterThan(-1);
+
+    // source-res rendition branch: AMF flags (-quality speed, no -tune), published to its own URL.
+    expect(argv).toContain("rtmp://127.0.0.1:1935/rendition/source-res/live");
+    expect(argv).toContain("-quality");
+    expect(argv).toContain("speed");
+
+    // Every video map target is a bracketed filter-graph label, never a raw stream specifier.
+    for (let i = 0; i < argv.length; i++) {
+      if (argv[i] === "-map" && argv[i + 1] !== "0:a") {
+        expect(argv[i + 1]).toMatch(/^\[.+\]$/);
+      }
+    }
+  });
+
+  it("maps a source-resolution-only rendition set straight to their raw split labels (no scale filter at all)", () => {
+    const rendition: Rendition = {
+      id: "source-only",
+      resolution: "source",
+      fps: 60,
+      videoQuality: { mode: "cq", value: 19 },
+      audioBitrateKbps: 192,
+      keyframeIntervalSec: 2,
+      encoderPreference: ["h264_nvenc"],
+    };
+    const argv = buildCombinedRelayAndRenditionsArgv(
+      "rtmp://127.0.0.1:1935/ingest/live",
+      "rtmp://127.0.0.1:1935/relay/live",
+      relayOpts,
+      [{ rendition, encoder: "h264_nvenc", outputUrl: "rtmp://127.0.0.1:1935/rendition/source-only/live" }],
+    );
+    const filterComplex = argv[argv.indexOf("-filter_complex") + 1];
+    expect(filterComplex).toBe("[0:v]split=2[vrelay][vr0]");
+    expect(argv).toContain("[vr0]");
+    expect(argv).not.toContain("-vf"); // scaling happens inside filter_complex, not as a separate -vf
   });
 });

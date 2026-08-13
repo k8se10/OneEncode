@@ -28,9 +28,14 @@ export interface RenditionRow {
   stats: LegStats | null;
 }
 
+export interface EncodeStatus {
+  state: string;
+}
+
 export interface StatusResponse {
   legs: LegRow[];
   renditions: RenditionRow[];
+  encode: EncodeStatus;
 }
 
 const TOKEN_KEY = "oneencode-ui-token";
@@ -74,13 +79,15 @@ export async function restartLeg(token: string, id: string): Promise<void> {
   if (!res.ok) throw new Error(`restart failed: ${res.status}`);
 }
 
-export async function stopRendition(token: string, id: string): Promise<void> {
-  const res = await apiFetch(`/api/renditions/${encodeURIComponent(id)}/stop`, token, { method: "POST" });
+// The relay and every rendition share one process (see CLAUDE.md, task
+// #24) — there is deliberately no per-rendition stop/restart anymore.
+export async function stopEncode(token: string): Promise<void> {
+  const res = await apiFetch(`/api/encode/stop`, token, { method: "POST" });
   if (!res.ok) throw new Error(`stop failed: ${res.status}`);
 }
 
-export async function restartRendition(token: string, id: string): Promise<void> {
-  const res = await apiFetch(`/api/renditions/${encodeURIComponent(id)}/restart`, token, { method: "POST" });
+export async function restartEncode(token: string): Promise<void> {
+  const res = await apiFetch(`/api/encode/restart`, token, { method: "POST" });
   if (!res.ok) throw new Error(`restart failed: ${res.status}`);
 }
 

@@ -74,9 +74,14 @@ function videoEncodeArgs(encoder: EncoderName, rendition: Rendition): string[] {
   }
 }
 
+function scaleFilterExpr(rendition: Rendition): string | undefined {
+  if (rendition.resolution === "source") return undefined;
+  return `scale=${rendition.resolution.width}:${rendition.resolution.height}`;
+}
+
 function scaleFilterArgs(rendition: Rendition): string[] {
-  if (rendition.resolution === "source") return [];
-  return ["-vf", `scale=${rendition.resolution.width}:${rendition.resolution.height}`];
+  const expr = scaleFilterExpr(rendition);
+  return expr ? ["-vf", expr] : [];
 }
 
 /** Where an encoded (or copied) stream ends up — shared by every argv builder below. */
@@ -199,4 +204,93 @@ export function buildRelayArgv(ingestUrl: string, relayPublishUrl: string, opts:
     "-f", "flv",
     relayPublishUrl,
   ];
+}
+
+/** One rendition's fully-resolved encode target within the combined process below. */
+export interface RenditionEncodeTarget {
+  rendition: Rendition;
+  encoder: EncoderName;
+  outputUrl: string;
+}
+
+/**
+ * Builds a single ffmpeg command that decodes the ingest exactly once and
+ * splits the decoded frames (`-filter_complex split`) into N+1 encode
+ * branches: the relay's own mezzanine re-encode (published exactly as
+ * `buildRelayArgv` would, unchanged for anything that reads it) plus one
+ * branch per rendition target, each scaled/encoded to its own profile and
+ * published straight to its own rendition-relay path.
+ *
+ * This replaces the previous design (decode/relay publishes over RTMP,
+ * each rendition is a SEPARATE process that re-subscribes and re-encodes)
+ * because a live re-encode of an already-relayed RTMP stream measurably
+ * amplifies frame-pacing jitter — confirmed via
+ * `scripts/jitterNoRtmpHopTest.ts` (task #24): the same split-from-one-
+ * decode pattern used here measured CoV=0.0000 on the rendition branch,
+ * matching baseline exactly, versus ~0.074 when that branch instead read
+ * the relay back over RTMP from a separate process. See CLAUDE.md's
+ * architecture section for the full writeup and the failure-isolation
+ * tradeoff this accepts: a crash here now takes down the relay and every
+ * rendition together (they already implicitly depended on the relay being
+ * alive), where each used to fail independently. Destination legs — the
+ * boundary that matters most, since a flaky platform shouldn't affect
+ * encoding — are untouched and still run as fully independent processes.
+ *
+ * Falls back to a plain `buildRelayArgv` (no filter_complex) when there
+ * are no rendition targets, rather than emitting a degenerate single-way
+ * split.
+ */
+export function buildCombinedRelayAndRenditionsArgv(
+  ingestUrl: string,
+  relayPublishUrl: string,
+  relayOpts: { encoder: EncoderName; preset: string; bitrateKbps: number },
+  renditionTargets: RenditionEncodeTarget[],
+): string[] {
+  if (renditionTargets.length === 0) {
+    return buildRelayArgv(ingestUrl, relayPublishUrl, relayOpts);
+  }
+
+  const splitLabels = ["vrelay", ...renditionTargets.map((_, i) => `vr${i}`)];
+  const filterParts = [`[0:v]split=${splitLabels.length}${splitLabels.map((l) => `[${l}]`).join("")}`];
+
+  const renditionMapLabels = renditionTargets.map((target, i) => {
+    const rawLabel = splitLabels[1 + i];
+    const scaleExpr = scaleFilterExpr(target.rendition);
+    if (!scaleExpr) return rawLabel;
+    const scaledLabel = `${rawLabel}s`;
+    filterParts.push(`[${rawLabel}]${scaleExpr}[${scaledLabel}]`);
+    return scaledLabel;
+  });
+
+  const argv: string[] = [
+    "-hide_banner",
+    "-loglevel", "warning",
+    "-stats",
+    // A real live RTMP source (unlike the synthetic lavfi source every
+    // prior test in this project used) can need more time/data than
+    // ffmpeg's defaults (analyzeduration=5s, probesize=5MB) allow before
+    // its stream layout is fully known -- without this, filtergraph
+    // binding can fail outright ("[0:v] matches no streams") if the
+    // filter_complex graph gets built before probing finishes. Only
+    // surfaced via real OBS testing; the synthetic source's stream info
+    // is always instantly and deterministically available.
+    "-analyzeduration", "10000000", "-probesize", "10000000",
+    "-i", ingestUrl,
+    "-filter_complex", filterParts.join(";"),
+    "-map", "[vrelay]", "-map", "0:a",
+    ...relayEncodeArgs(relayOpts.encoder, relayOpts.preset, relayOpts.bitrateKbps),
+    "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+    "-f", "flv", relayPublishUrl,
+  ];
+
+  renditionTargets.forEach((target, i) => {
+    argv.push(
+      "-map", `[${renditionMapLabels[i]}]`, "-map", "0:a",
+      ...videoEncodeArgs(target.encoder, target.rendition),
+      "-c:a", "aac", "-b:a", `${target.rendition.audioBitrateKbps}k`, "-ar", "48000",
+      "-f", "flv", target.outputUrl,
+    );
+  });
+
+  return argv;
 }

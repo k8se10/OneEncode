@@ -5,11 +5,12 @@ import {
   fetchStatus,
   getStoredToken,
   openLiveSocket,
+  restartEncode,
   restartLeg,
-  restartRendition,
+  stopEncode,
   stopLeg,
-  stopRendition,
   storeToken,
+  type EncodeStatus,
   type LegRow,
   type LegStats,
   type RenditionRow,
@@ -80,6 +81,7 @@ function App() {
   const [tab, setTab] = useState<"monitor" | "configure">("monitor");
   const [legs, setLegs] = useState<LegRow[]>([]);
   const [renditions, setRenditions] = useState<RenditionRow[]>([]);
+  const [encode, setEncode] = useState<EncodeStatus>({ state: "unknown" });
   const [error, setError] = useState<string | null>(null);
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [restartNotice, setRestartNotice] = useState(false);
@@ -94,6 +96,7 @@ function App() {
         if (cancelled) return;
         setLegs(status.legs);
         setRenditions(status.renditions);
+        setEncode(status.encode);
         setError(null);
       } catch (err) {
         if (err instanceof AuthError) {
@@ -109,8 +112,21 @@ function App() {
     const pollInterval = setInterval(refresh, 5000); // status/config changes rarely; live stats come via WebSocket below
 
     const ws = openLiveSocket(token, (legId, stats) => {
-      setLegs((prev) => prev.map((leg) => (leg.id === legId ? { ...leg, stats } : leg)));
-      setRenditions((prev) => prev.map((r) => (`rendition-${r.id}` === legId ? { ...r, stats } : r)));
+      // A rendition has no live process of its own anymore (see CLAUDE.md,
+      // task #24) — its stats are derived from its own leg's `-c copy`
+      // output, which is byte-identical to what that rendition produces.
+      // Find which rendition this leg belongs to from the CURRENT legs
+      // array (captured inside the updater, not this closure, so it's
+      // never stale) and propagate the same stats sample there too.
+      let renditionIdForLeg: string | undefined;
+      setLegs((prev) =>
+        prev.map((leg) => {
+          if (leg.id !== legId) return leg;
+          renditionIdForLeg = leg.renditionId;
+          return { ...leg, stats };
+        }),
+      );
+      setRenditions((prev) => prev.map((r) => (r.id === renditionIdForLeg ? { ...r, stats } : r)));
     });
 
     return () => {
@@ -176,6 +192,24 @@ function App() {
         <ConfigManager token={token} onConfigChanged={() => setRestartNotice(true)} />
       ) : (
         <>
+          <section className="rendition-card">
+            <div className="rendition-header">
+              <h2>Encode pipeline</h2>
+              <StateBadge state={encode.state} />
+              <span className="muted">
+                Decode + relay + every rendition run in one shared process — stopping/restarting it affects all of them together.
+              </span>
+              <div className="controls">
+                <button disabled={busyIds.has("encode")} onClick={() => withBusy("encode", () => stopEncode(token))}>
+                  Stop
+                </button>
+                <button disabled={busyIds.has("encode")} onClick={() => withBusy("encode", () => restartEncode(token))}>
+                  Restart
+                </button>
+              </div>
+            </div>
+          </section>
+
           {renditions.length === 0 && <p className="muted">No renditions configured yet — switch to the Configure tab to add one.</p>}
           {renditions.map((rendition) => (
         <section key={rendition.id} className="rendition-card">
@@ -187,20 +221,6 @@ function App() {
               {rendition.videoBitrateKbps ? `${rendition.videoBitrateKbps}kbps` : "cq"} ·{" "}
               {rendition.encoderPreference.join(" → ")}
             </span>
-            <div className="controls">
-              <button
-                disabled={busyIds.has(`rendition-${rendition.id}`)}
-                onClick={() => withBusy(`rendition-${rendition.id}`, () => stopRendition(token, rendition.id))}
-              >
-                Stop
-              </button>
-              <button
-                disabled={busyIds.has(`rendition-${rendition.id}`)}
-                onClick={() => withBusy(`rendition-${rendition.id}`, () => restartRendition(token, rendition.id))}
-              >
-                Restart
-              </button>
-            </div>
             <StatsCell stats={rendition.stats} />
           </div>
 
