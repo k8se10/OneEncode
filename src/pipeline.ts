@@ -8,7 +8,7 @@ import { createBroadcastArmState } from "./health/broadcastArm.js";
 import { groupLegsByRendition, buildRenditionUrl } from "./rendition/group.js";
 import { resolveOutputPath } from "./destinations/localFileDestination.js";
 import { resolveRtmpDestination } from "./destinations/rtmpDestination.js";
-import { loadProbedCeiling, NvencSessionTracker, selectEncoder, isNvencEncoder } from "./nvenc/sessionTracker.js";
+import { loadProbedCeiling, NvencSessionTracker, selectEncoder } from "./nvenc/sessionTracker.js";
 
 /** A managed leg's recreate-on-demand descriptor, so a manual restart doesn't need the whole pipeline rebuilt. */
 interface Managed {
@@ -80,8 +80,12 @@ export async function startPipeline(config: RootConfig, destinations: ResolvedDe
   await relay.ready;
 
   const { ceiling: nvencCeiling } = loadProbedCeiling();
+  // No reservation for config.relay.encoder here: the relay's own separate
+  // mezzanine encode branch was removed 2026-08-13 (buildCombinedRelayAndRenditionsArgv's
+  // own comment has the full story) — nothing consumes it anymore, so it no
+  // longer runs and shouldn't claim an NVENC session slot for a branch that
+  // doesn't exist.
   const nvencTracker = new NvencSessionTracker(nvencCeiling);
-  if (isNvencEncoder(config.relay.encoder)) nvencTracker.reserve();
 
   const legsByRendition = groupLegsByRendition(config.legs);
   const renditionTargets: RenditionEncodeTarget[] = [];

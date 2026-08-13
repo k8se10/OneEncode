@@ -215,9 +215,7 @@ export interface RenditionEncodeTarget {
 
 /**
  * Builds a single ffmpeg command that decodes the ingest exactly once and
- * splits the decoded frames (`-filter_complex split`) into N+1 encode
- * branches: the relay's own mezzanine re-encode (published exactly as
- * `buildRelayArgv` would, unchanged for anything that reads it) plus one
+ * splits the decoded frames (`-filter_complex split`) into one encode
  * branch per rendition target, each scaled/encoded to its own profile and
  * published straight to its own rendition-relay path.
  *
@@ -236,8 +234,19 @@ export interface RenditionEncodeTarget {
  * boundary that matters most, since a flaky platform shouldn't affect
  * encoding — are untouched and still run as fully independent processes.
  *
+ * NO LONGER publishes a separate "[vrelay]" mezzanine branch (removed
+ * 2026-08-13, real GPU contention found during the 3-platform test — this
+ * branch was running at full source resolution/40Mbps/lowest-latency
+ * preset, the single most expensive branch in the whole process, and
+ * nothing in the codebase ever subscribed to it: every leg reads its own
+ * `/rendition/<id>` path directly, never `relay.url` itself, confirmed via
+ * a full grep before removing it). Cutting it drops the NVENC session
+ * count by one for every config, with zero functional loss. `relayOpts`
+ * (the relay's own encoder/preset/bitrate) is now only used by the
+ * `buildRelayArgv` fallback below, for the degenerate zero-rendition case.
+ *
  * Falls back to a plain `buildRelayArgv` (no filter_complex) when there
- * are no rendition targets, rather than emitting a degenerate single-way
+ * are no rendition targets, rather than emitting a degenerate zero-way
  * split.
  */
 export function buildCombinedRelayAndRenditionsArgv(
@@ -250,11 +259,11 @@ export function buildCombinedRelayAndRenditionsArgv(
     return buildRelayArgv(ingestUrl, relayPublishUrl, relayOpts);
   }
 
-  const splitLabels = ["vrelay", ...renditionTargets.map((_, i) => `vr${i}`)];
+  const splitLabels = renditionTargets.map((_, i) => `vr${i}`);
   const filterParts = [`[0:v]split=${splitLabels.length}${splitLabels.map((l) => `[${l}]`).join("")}`];
 
   const renditionMapLabels = renditionTargets.map((target, i) => {
-    const rawLabel = splitLabels[1 + i];
+    const rawLabel = splitLabels[i];
     const scaleExpr = scaleFilterExpr(target.rendition);
     if (!scaleExpr) return rawLabel;
     const scaledLabel = `${rawLabel}s`;
@@ -277,10 +286,6 @@ export function buildCombinedRelayAndRenditionsArgv(
     "-analyzeduration", "10000000", "-probesize", "10000000",
     "-i", ingestUrl,
     "-filter_complex", filterParts.join(";"),
-    "-map", "[vrelay]", "-map", "0:a",
-    ...relayEncodeArgs(relayOpts.encoder, relayOpts.preset, relayOpts.bitrateKbps),
-    "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-    "-f", "flv", relayPublishUrl,
   ];
 
   renditionTargets.forEach((target, i) => {

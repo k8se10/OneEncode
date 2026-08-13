@@ -151,7 +151,7 @@ describe("buildCombinedRelayAndRenditionsArgv", () => {
     expect(combined).not.toContain("-filter_complex");
   });
 
-  it("decodes once and splits into a relay branch plus one branch per rendition — task #24 fix", () => {
+  it("decodes once and splits into one branch per rendition, no separate relay branch — task #24 fix", () => {
     // Deliberately mixes: one rendition that needs scaling (1080p) on NVENC,
     // one at source resolution (no scale filter should appear for it) on AMF
     // — exercises both the scale/no-scale split and per-encoder-family argv
@@ -193,18 +193,19 @@ describe("buildCombinedRelayAndRenditionsArgv", () => {
     const filterIdx = argv.indexOf("-filter_complex");
     expect(filterIdx).toBeGreaterThan(-1);
     const filterComplex = argv[filterIdx + 1];
-    expect(filterComplex).toContain("split=3"); // relay + 2 renditions, one decode
+    expect(filterComplex).toContain("split=2"); // 2 renditions, one decode, no separate relay branch
     expect(filterComplex).toContain("scale=1920:1080"); // only the 1080p branch scales
     expect(filterComplex.match(/scale=/g)).toHaveLength(1); // source-res branch must NOT get a scale filter
 
-    // 3 outputs total (relay + 2 renditions) => audio mapped 3 times, one encoder instance each.
-    expect(argv.filter((tok) => tok === "0:a")).toHaveLength(3);
-    expect(argv.filter((tok) => tok === "-map")).toHaveLength(6); // one video + one audio map per output
+    // 2 outputs total (2 renditions, no relay mezzanine branch) => audio mapped twice, one encoder instance each.
+    expect(argv.filter((tok) => tok === "0:a")).toHaveLength(2);
+    expect(argv.filter((tok) => tok === "-map")).toHaveLength(4); // one video + one audio map per output
 
-    // Relay branch: published unchanged, low-latency NVENC flags present.
-    expect(argv).toContain("rtmp://127.0.0.1:1935/relay/live");
-    expect(argv).toContain("-tune");
-    expect(argv).toContain("ull");
+    // No separate relay mezzanine branch anymore — nothing in the codebase
+    // ever subscribed to it (every leg reads its own rendition URL
+    // directly), so it's no longer built or published at all.
+    expect(argv).not.toContain("rtmp://127.0.0.1:1935/relay/live");
+    expect(argv).not.toContain("ull");
 
     // 1080p rendition branch: NVENC bitrate-mode flags, published to its own rendition URL.
     expect(argv).toContain("rtmp://127.0.0.1:1935/rendition/1080p/live");
@@ -241,7 +242,7 @@ describe("buildCombinedRelayAndRenditionsArgv", () => {
       [{ rendition, encoder: "h264_nvenc", outputUrl: "rtmp://127.0.0.1:1935/rendition/source-only/live" }],
     );
     const filterComplex = argv[argv.indexOf("-filter_complex") + 1];
-    expect(filterComplex).toBe("[0:v]split=2[vrelay][vr0]");
+    expect(filterComplex).toBe("[0:v]split=1[vr0]");
     expect(argv).toContain("[vr0]");
     expect(argv).not.toContain("-vf"); // scaling happens inside filter_complex, not as a separate -vf
   });
