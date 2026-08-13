@@ -2,8 +2,16 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { loadConfig, ConfigError } from "./config/load.js";
 import { logEvent } from "./logging/logger.js";
+import { mirrorConsoleToFile } from "./logging/consoleMirror.js";
 import { startPipeline } from "./pipeline.js";
 import { startUiServer } from "./ui/server.js";
+
+// First thing, before anything else can log — every console.log/warn/error
+// call for the rest of this process's lifetime now also lands in
+// logs/oneencode-console-<date>.log, not just whatever terminal happens to
+// be watching (or isn't, if the exe was double-clicked rather than launched
+// from a console). See consoleMirror.ts for why this exists.
+mirrorConsoleToFile();
 
 /**
  * When running as the packaged standalone exe (npm run package:win),

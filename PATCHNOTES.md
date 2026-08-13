@@ -1,5 +1,17 @@
 # PATCHNOTES
 
+## v0.18.0 — swap bundled ffmpeg to an OpenSSL/SChannel-TLS build (Kick RTMPS investigation)
+
+The real 3-platform test found `kick-main` dying at a consistent ~2s every attempt (`[tls] Error in the pull function / IO error: End of file`), while Twitch/YouTube worked fine. The bundled ffmpeg (gyan.dev's essentials build) is compiled `--enable-gnutls`, and GnuTLS-based ffmpeg RTMPS builds have documented real-world compatibility gaps with some ingest servers that OpenSSL/native-TLS builds don't share. Swapped the bundled `ffmpeg.exe` (personal-package-only, see v0.13.0's ffmpeg-bundling note) to BtbN's `win64-gpl` build (`github.com/BtbN/FFmpeg-Builds`), which is `--enable-schannel` (Windows' own native TLS stack, not GnuTLS — corrected from an initial assumption it was OpenSSL) — same GPL license category, `ffmpeg-LICENSE.txt` updated accordingly. Also confirmed this build carries full HEVC (`libx265`, `hevc_nvenc`, `hevc_amf`) and AV1 (`libaom`, `libsvtav1`, `av1_nvenc`, `av1_amf`) encoder support. **Not yet verified against the real Kick failure** — needs a real retest on the streaming PC.
+
+## v0.17.0 — always write console output to a log file
+
+Requested directly by the user after debugging a real Kick RTMPS failure needed the raw ffmpeg stderr tail — which only ever went to `console.error`, never to the structured JSONL log `logger.ts` already writes — so a run launched by double-clicking the exe (no terminal to scroll back through) left no record of it at all.
+
+### Added
+- `src/logging/consoleMirror.ts` (`mirrorConsoleToFile()`, called first thing in `src/index.ts`): wraps `console.log`/`console.warn`/`console.error` to also append every call to `logs/oneencode-console-<date>.log`, in addition to printing normally. Every line is redacted the same way `logger.ts`'s own writes are (CLAUDE.md §2A) — defense in depth in case a future call site ever passes something unredacted straight to `console.error`.
+- Test added (`tests/logging/consoleMirror.test.ts`) covering both the pass-through behavior and the redaction-of-embedded-secret case.
+
 ## v0.16.0 — auto-login: the auto-launched dashboard tab is now zero-manual-step
 
 User feedback after v0.15.0: opening the browser automatically was good, but you still had to manually copy the token out of `state/ui-token.txt` and paste it into the login screen every time. Fixed with the user's explicit sign-off, since this touches CLAUDE.md's "the token is never displayed in a URL" rule.
