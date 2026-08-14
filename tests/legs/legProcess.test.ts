@@ -11,8 +11,11 @@ import { PassThrough } from "node:stream";
 vi.mock("node:fs", () => ({
   default: {
     existsSync: () => true,
+    statSync: () => ({ size: 0, mtimeMs: 0 }),
     mkdirSync: () => {},
     appendFileSync: () => {},
+    readdirSync: () => [],
+    unlinkSync: () => {},
   },
 }));
 

@@ -1,8 +1,5 @@
-import fs from "node:fs";
-import path from "node:path";
 import { redactObject } from "./redact.js";
-
-const LOGS_DIR = path.resolve(process.cwd(), "logs");
+import { appendRotatingLog } from "./logRotation.js";
 
 /**
  * Mirrors every console.log/warn/error call to a plain-text file, in
@@ -21,11 +18,9 @@ export function mirrorConsoleToFile(): void {
     return (...args: unknown[]) => {
       original(...args);
       try {
-        fs.mkdirSync(LOGS_DIR, { recursive: true });
         const today = new Date().toISOString().slice(0, 10);
-        const filePath = path.join(LOGS_DIR, `oneencode-console-${today}.log`);
         const line = args.map((a) => redactObject(typeof a === "string" ? a : JSON.stringify(a))).join(" ");
-        fs.appendFileSync(filePath, `[${new Date().toISOString()}] ${line}\n`, "utf8");
+        appendRotatingLog(`oneencode-console-${today}`, ".log", `[${new Date().toISOString()}] ${line}\n`);
       } catch {
         // Logging must never be the reason the app itself crashes.
       }

@@ -1,7 +1,5 @@
 import fs from "node:fs";
-import path from "node:path";
-
-const LOGS_DIR = path.resolve(process.cwd(), "logs");
+import { listTodaysRotatedFiles } from "../logging/logRotation.js";
 
 export interface LegLiveStats {
   fps: number;
@@ -50,12 +48,18 @@ export class LiveStateTracker {
 
   private poll(): void {
     const today = new Date().toISOString().slice(0, 10);
-    const logPath = path.join(LOGS_DIR, `oneencode-${today}.jsonl`);
+    // The active file is always the highest-indexed one that exists for
+    // today (appendRotatingLog only ever rotates forward) — following it
+    // is what keeps this tailer alive across a rotation past
+    // logRotation.ts's MAX_LOG_FILE_BYTES; without this it would keep
+    // watching a file that stopped growing and the dashboard would freeze.
+    const rotated = listTodaysRotatedFiles(`oneencode-${today}`, ".jsonl");
+    const logPath = rotated.at(-1);
+    if (!logPath) return;
     if (logPath !== this.currentLogPath) {
       this.currentLogPath = logPath;
-      this.readOffset = 0; // a new day's log file — start from its beginning
+      this.readOffset = 0; // a new day's file or a fresh rotation — start from its beginning
     }
-    if (!fs.existsSync(logPath)) return;
 
     const stat = fs.statSync(logPath);
     if (stat.size <= this.readOffset) return; // nothing new (or file was rotated/truncated — next poll's stat will catch a real new file)

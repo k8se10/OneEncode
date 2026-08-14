@@ -4,7 +4,11 @@ const appended: string[] = [];
 
 vi.mock("node:fs", () => ({
   default: {
+    existsSync: () => false,
+    statSync: () => ({ size: 0, mtimeMs: 0 }),
     mkdirSync: () => {},
+    readdirSync: () => [],
+    unlinkSync: () => {},
     appendFileSync: (_path: string, content: string) => {
       appended.push(content);
     },

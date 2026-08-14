@@ -1,8 +1,5 @@
-import fs from "node:fs";
-import path from "node:path";
 import { redactObject } from "./redact.js";
-
-const LOGS_DIR = path.resolve(process.cwd(), "logs");
+import { appendRotatingLog } from "./logRotation.js";
 
 export type LogEvent =
   | { event: "relay_health"; status: "up" | "down"; detail?: string }
@@ -31,29 +28,21 @@ export type LogEvent =
   | { event: "encoder_fallback"; legId: string; requestedEncoder: string; actualEncoder: string; reason: string }
   | { event: "config_validation_error"; message: string };
 
-function ensureLogsDir(): void {
-  if (!fs.existsSync(LOGS_DIR)) {
-    fs.mkdirSync(LOGS_DIR, { recursive: true });
-  }
-}
-
-function logFilePath(): string {
-  const today = new Date().toISOString().slice(0, 10);
-  return path.join(LOGS_DIR, `oneencode-${today}.jsonl`);
-}
-
 /**
  * Structured, append-only JSON-Lines logger. Every write goes through
  * redactObject() first — secrets must never reach a log file, even locally.
+ * Rotates past MAX_LOG_FILE_BYTES/day and prunes past MAX_TOTAL_LOG_BYTES
+ * overall (see logRotation.ts) so a long-running install's logs/ directory
+ * can't grow without bound.
  */
 export function logEvent(entry: LogEvent): void {
-  ensureLogsDir();
   const record = {
     timestamp: new Date().toISOString(),
     ...redactObject(entry),
   };
   const line = JSON.stringify(record) + "\n";
-  fs.appendFileSync(logFilePath(), line, "utf8");
+  const today = new Date().toISOString().slice(0, 10);
+  appendRotatingLog(`oneencode-${today}`, ".jsonl", line);
 
   const isLoud = entry.event === "leg_failed_permanent" || entry.event === "config_validation_error";
   if (isLoud) {

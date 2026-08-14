@@ -1,7 +1,5 @@
 import fs from "node:fs";
-import path from "node:path";
-
-const LOGS_DIR = path.resolve(process.cwd(), "logs");
+import { listTodaysRotatedFiles } from "./logRotation.js";
 
 interface StatsSampleLine {
   event: "leg_stats_sample";
@@ -10,9 +8,9 @@ interface StatsSampleLine {
   timestamp: string;
 }
 
-function todaysLogPath(): string {
+function todaysLogPaths(): string[] {
   const today = new Date().toISOString().slice(0, 10);
-  return path.join(LOGS_DIR, `oneencode-${today}.jsonl`);
+  return listTodaysRotatedFiles(`oneencode-${today}`, ".jsonl");
 }
 
 /**
@@ -30,23 +28,23 @@ function todaysLogPath(): string {
  */
 export function readFpsSamplesForLegs(legIds: string[], since: Date): Map<string, number[]> {
   const result = new Map<string, number[]>(legIds.map((id) => [id, []]));
-  const logPath = todaysLogPath();
-  if (!fs.existsSync(logPath)) return result;
-
   const legIdSet = new Set(legIds);
   const sinceMs = since.getTime();
-  const lines = fs.readFileSync(logPath, "utf8").split("\n");
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    let parsed: StatsSampleLine;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      continue;
+
+  for (const logPath of todaysLogPaths()) {
+    const lines = fs.readFileSync(logPath, "utf8").split("\n");
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let parsed: StatsSampleLine;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (parsed.event !== "leg_stats_sample" || !legIdSet.has(parsed.legId)) continue;
+      if (Date.parse(parsed.timestamp) < sinceMs) continue;
+      result.get(parsed.legId)!.push(parsed.fps);
     }
-    if (parsed.event !== "leg_stats_sample" || !legIdSet.has(parsed.legId)) continue;
-    if (Date.parse(parsed.timestamp) < sinceMs) continue;
-    result.get(parsed.legId)!.push(parsed.fps);
   }
   return result;
 }

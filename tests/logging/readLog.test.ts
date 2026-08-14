@@ -57,4 +57,15 @@ describe("readFpsSamplesForLegs", () => {
   it("tolerates malformed lines without throwing", () => {
     expect(() => readFpsSamplesForLegs(["relay"], new Date(0))).not.toThrow();
   });
+
+  it("reads samples across rotated files (oneencode-<date>.jsonl, .2.jsonl, ...) in write order", () => {
+    const rotatedPath = path.join(LOGS_DIR, `oneencode-${today}.2.jsonl`);
+    fs.writeFileSync(rotatedPath, line("relay", 64, "2026-08-13T12:00:02.000Z"));
+    try {
+      const result = readFpsSamplesForLegs(["relay"], new Date("2026-08-13T11:00:00.000Z"));
+      expect(result.get("relay")).toEqual([62, 63, 64]);
+    } finally {
+      fs.rmSync(rotatedPath, { force: true });
+    }
+  });
 });

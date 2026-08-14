@@ -1,5 +1,25 @@
 # PATCHNOTES
 
+## Public-release prep — log rotation/size bounding, git history scrub, flaky test-suite fix
+
+Getting ready for the first public release. Three separate pieces of work:
+
+### Fixed — two real personal identifiers were live on the public GitHub repo
+
+Audited the full git history (not just the working tree — a full `git log --all -p` grep) for anything personal/secret. Found two real leaks, both already pushed to `origin/master`: (1) the user's real Kick account ingest subdomain (`fa723fc1b171.global-contribute.live-video.net`) baked into a `tests/logging/redact.test.ts` fixture and mentioned in an earlier PATCHNOTES entry, and (2) the user's real Windows username in a local file path quoted in a PATCHNOTES entry. **No actual stream key was found anywhere in history** — confirmed via a full-history grep for fragments of all three real platform keys, clean. Per the user's explicit choice, fully purged via `git filter-repo --replace-text` (run against a fresh clone, not the primary working copy) followed by a force-push to `origin/master`, then the local repo was `git fetch`+`reset --hard` to match. Verified with a fresh full-history grep afterward — zero remaining occurrences of either string anywhere. Every commit hash changed as a result (expected/unavoidable with a history rewrite). Caveat noted to the user: this only scrubs GitHub's copy — any pre-existing clone/fork elsewhere would still have the old commits, though there's no evidence any exist (repo went public this same session).
+
+### Added — bounded log rotation, so a long-running install's `logs/` directory can't grow forever
+
+Both the structured JSONL logger (`logger.ts`) and the always-on console mirror (`consoleMirror.ts`) previously rotated only by calendar day, with no cap on how big a single day's file could get and no pruning of old files at all — a real gap for a public release meant to run unattended on someone else's machine. New shared module `src/logging/logRotation.ts`:
+- `appendRotatingLog(baseName, ext, line)` rolls to a new numbered file (`oneencode-<date>.2.jsonl`, `.3.jsonl`, ...) once the current dated file would exceed `MAX_LOG_FILE_BYTES` (10MB) — a single oversized line is still accepted into a fresh file rather than looping forever.
+- Every time a new file is opened, prunes the oldest `oneencode-`-prefixed files across the whole `logs/` directory (both JSONL and console-mirror files combined) until total size is back under `MAX_TOTAL_LOG_BYTES` (200MB).
+- `listTodaysRotatedFiles(baseName, ext)` is the shared read-side helper — both `readLog.ts` (benchmark jitter analysis, which now reads every rotated file for a date, not just the base one) and `ui/liveState.ts` (the dashboard's live-tailing, which now follows rotation forward instead of freezing once the base file stops growing) use it, so a rotation mid-broadcast doesn't silently break either.
+- New tests: `tests/logging/logRotation.test.ts` (real-fs rotation/oversized-line behavior at the real 10MB scale) and `tests/logging/logRotationPrune.test.ts` (mocked-fs pruning behavior — deliberately mocked rather than writing a real 200MB fixture in a unit test).
+
+### Fixed — a real, pre-existing flaky-test bug found while testing the above
+
+No `vitest.config.ts` existed, so vitest's default test-file glob picked up stale compiled `dist/tests/**/*.test.js` files (left over from an earlier `tsc`/packaging build — `tsconfig.json` compiles `tests/**/*.ts` alongside `src/`) *in addition to* the real `tests/**/*.test.ts` sources. Both copies ran in the same pass and raced on the same real files (`logs/oneencode-<date>.jsonl` in `readLog.test.ts`), causing an intermittent `ENOENT`. Not something this session introduced, but surfaced while verifying the rotation change. Added `vitest.config.ts` excluding `dist/`, `dist-pkg/`, `dist-release/`, and `web/` from test discovery, and removed the stale `dist/` directory. Full suite now passes cleanly and deterministically: 14 files, 70 tests, 0 flakes, clean `tsc --noEmit`.
+
 ## Investigated — TikTok LIVE access model, next platform under consideration
 
 Researched how third-party multistreaming tools (se.live/StreamElements et al.) actually get TikTok working, ahead of adding it as a real leg. Unlike Twitch/YouTube/Kick/Facebook, **TikTok LIVE has no open self-serve RTMP signup**. TikTok's own in-app "LIVE Studio"/"Cast to PC" feature is eligibility-gated and, critically, **issues a new RTMP server URL + stream key every broadcast session** rather than a stable long-lived credential.
