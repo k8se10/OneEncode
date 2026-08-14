@@ -1,5 +1,19 @@
 # PATCHNOTES
 
+## First-run UX — no more manual config copy just to get the app to start
+
+Direct user feedback: "it should also make default configs and such the ux is terrible rn." Previously, a missing `config/legs.local.yaml` was a hard startup error telling you to go copy-and-edit `legs.example.yaml` by hand — real friction, especially now that the standalone release is supposed to be click-and-run.
+
+### Added
+- `config/legs.default.yaml` — a new committed template distinct from `legs.example.yaml`: a single `local-file` leg, no real platform credentials needed, no external side effect. The safest possible thing to auto-start.
+- `src/config/load.ts`'s `loadConfig()` now auto-generates `config/legs.local.yaml` from this default **only when the file doesn't exist at all** — an existing-but-invalid config still fails loudly with the same validation error as before, so this never papers over a real mistake, only a genuinely fresh install.
+- Surfaced, not silent: a clear startup console log line, plus a new `usingDefaultConfig` flag threaded through `loadConfig()` → `startUiServer()`/`createApiRouter()` → `GET /api/status` → a dashboard banner (`web/src/App.tsx`) with a one-click jump to the Configure tab.
+- `scripts/package-win.ps1` now also bundles `config/legs.default.yaml` into the release folder — without this the packaged exe's own "click and run" promise would have been broken on a truly fresh install (caught before it caused a real bug, not after).
+- `tests/config/load.test.ts` (new, first config test file this project has had) — real fs against the real `config/` directory with backup/restore (same pattern as `readLog.test.ts`), covering auto-generation on a missing file, no-overwrite of an existing file, and a clear error if `legs.default.yaml` itself is ever missing too.
+
+### Verified live
+Two separate real runs, both with the actual local config temporarily removed/backed-up: `npm run dev` from source, and the freshly-rebuilt packaged `oneencode.exe` with `ffmpeg` also stripped from `PATH` (the strictest possible "nothing pre-installed" test). Both started cleanly against the auto-generated default — MediaMTX healthy, the combined encode process spawned and running, `config/legs.local.yaml` correctly created on disk — with only the expected "no real OBS source connected" errors. Real dev-machine config restored afterward in both cases, confirmed byte-identical to before.
+
 ## Standalone release is now genuinely click-and-run — ffmpeg and MediaMTX both bundled
 
 Requested directly by the user: "everything should be in the release - all dependencies... it needs to be click and run." Previously `scripts/package-win.ps1` only produced a bare `oneencode.exe`, with ffmpeg and MediaMTX left as separate required installs even for the packaged-exe path — real friction for anyone downloading a release rather than setting up a dev environment.

@@ -9,7 +9,8 @@ and want to understand every field and how the pieces fit together.
 
 | File | Committed? | Purpose |
 |---|---|---|
-| `config/legs.example.yaml` | Yes | Placeholder template — copy this to `legs.local.yaml` to start. |
+| `config/legs.example.yaml` | Yes | Documentation template — showcases every field (multiple renditions, rendition dedup, an `rtmp-push` leg shape) but isn't meant to run as-is (its `rtmp-push` legs reference secrets that don't exist). Copy this to `legs.local.yaml` as a starting point for real setup. |
+| `config/legs.default.yaml` | Yes | The **actually-runnable** first-run default — one `local-file` leg, no real credentials needed. Auto-copied to `legs.local.yaml` if that file doesn't exist yet (see below); you won't normally edit this directly. |
 | `config/legs.local.yaml` | **No** (gitignored) | Your real renditions, legs, ingest/relay settings, restart policy. |
 | `config/secrets.local.example.yaml` | Yes | Placeholder template for secrets. |
 | `config/secrets.local.yaml` | **No** (gitignored) | A flat map of `ENV_VAR_NAME: real-value` — real destination URLs and stream keys. Never referenced by literal value anywhere else in config; legs point at a secret by *name* only. |
@@ -17,11 +18,16 @@ and want to understand every field and how the pieces fit together.
 | `config/mediamtx.yml` | Yes | Config for the bundled local RTMP relay server (MediaMTX). You generally won't need to touch this. |
 
 `legs.local.yaml` and `secrets.local.yaml` are both loaded and validated at
-startup by `src/config/load.ts`. If `legs.local.yaml` doesn't exist, or fails
-schema validation, or a leg references a secret env-var name that isn't
-resolvable (missing from `secrets.local.yaml` *and* not set as a real
-process environment variable), the orchestrator refuses to start — it never
-partial-starts with some legs silently missing their credentials.
+startup by `src/config/load.ts`. **If `legs.local.yaml` doesn't exist at all**,
+it's auto-generated from `legs.default.yaml` so the orchestrator can start on
+a completely fresh install — a startup log line and the dashboard's
+`usingDefaultConfig` banner both make this visible, it's never silent. This
+only fires when the file is *missing*; if it exists but **fails schema
+validation**, or a leg references a secret env-var name that isn't resolvable
+(missing from `secrets.local.yaml` *and* not set as a real process
+environment variable), the orchestrator still refuses to start with a clear
+error — a real, if broken, config is never silently replaced or
+partial-started with some legs missing their credentials.
 
 There is currently **no hot-reload**. Every config change (through the
 dashboard or by hand-editing YAML) requires restarting the orchestrator to

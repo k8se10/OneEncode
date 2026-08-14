@@ -100,6 +100,7 @@ function App() {
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [restartNotice, setRestartNotice] = useState(false);
   const [broadcastArmed, setBroadcastArmed] = useState(false);
+  const [usingDefaultConfig, setUsingDefaultConfig] = useState(false);
 
   // Persist a URL-provided token (see getUrlToken) so future manual reloads
   // don't need it again, then strip it from the address bar immediately —
@@ -126,6 +127,7 @@ function App() {
         setRenditions(status.renditions);
         setEncode(status.encode);
         setBroadcastArmed(status.broadcastArmed);
+        setUsingDefaultConfig(status.usingDefaultConfig);
         setError(null);
       } catch (err) {
         if (err instanceof AuthError) {
@@ -215,6 +217,16 @@ function App() {
           </button>
         </div>
       </header>
+
+      {usingDefaultConfig && (
+        <div className="default-config-banner">
+          <span>
+            Running on an auto-generated default config (one local-file leg, no real platform credentials) —
+            no config/legs.local.yaml existed on startup.
+          </span>
+          <button onClick={() => setTab("configure")}>Configure real destinations</button>
+        </div>
+      )}
 
       <div className={`arm-banner ${broadcastArmed ? "armed" : "disarmed"}`}>
         <span>

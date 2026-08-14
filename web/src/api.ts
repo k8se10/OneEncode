@@ -37,6 +37,7 @@ export interface StatusResponse {
   renditions: RenditionRow[];
   encode: EncodeStatus;
   broadcastArmed: boolean;
+  usingDefaultConfig: boolean;
 }
 
 const TOKEN_KEY = "oneencode-ui-token";

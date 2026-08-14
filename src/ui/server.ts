@@ -25,7 +25,11 @@ export interface UiServerHandle {
  * secrets, so it must never be reachable from the LAN, let alone the
  * internet.
  */
-export function startUiServer(pipeline: RunningPipeline, port = 4771): UiServerHandle {
+export function startUiServer(
+  pipeline: RunningPipeline,
+  options: { port?: number; usingDefaultConfig?: boolean } = {},
+): UiServerHandle {
+  const port = options.port ?? 4771;
   const token = loadOrCreateUiToken();
   const sockets = new Set<WebSocket>();
   const liveState = new LiveStateTracker((legId, stats) => {
@@ -39,7 +43,7 @@ export function startUiServer(pipeline: RunningPipeline, port = 4771): UiServerH
   const app = express();
   app.use(express.json());
 
-  app.use("/api", requireUiToken(token), createApiRouter(pipeline, liveState));
+  app.use("/api", requireUiToken(token), createApiRouter(pipeline, liveState, { usingDefaultConfig: options.usingDefaultConfig }));
   app.use("/api/config", requireUiToken(token), createConfigApiRouter());
 
   if (fs.existsSync(WEB_DIST_DIR)) {

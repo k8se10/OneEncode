@@ -18,6 +18,7 @@ OneEncode decodes the source once and splits the decoded frames into per-renditi
 - **Manual broadcast-arm safety gate** — every destination leg that pushes to a real platform starts staged, not running, even if enabled in config. Nothing reaches a real platform until you arm broadcasting and hit "Go Live" on that leg. Disarming immediately stops every live push.
 - **Structured, size-bounded logging** — both the JSON-Lines event log and the always-on console mirror rotate past a size cap and prune old files, so a long-running install's `logs/` directory doesn't grow without bound.
 - **Standalone, click-and-run Windows release** — `npm run package:win` produces a folder with `oneencode.exe` plus every runtime dependency bundled alongside it (Node itself, the built dashboard, MediaMTX, and FFmpeg) — nothing to install on the target machine.
+- **Zero-config first run** — no `config/legs.local.yaml` yet? A safe default (one local-file leg, no real credentials needed) is generated automatically so the app starts and proves the pipeline works, with a dashboard banner pointing you at real setup.
 
 ## How it fits together
 
@@ -56,20 +57,24 @@ Either way: an NVIDIA and/or AMD GPU for hardware-accelerated encode; falls back
 
 ## Quick start
 
-Using a standalone release build instead? Skip straight to unzipping it and running `oneencode.exe` — everything below is for running from source.
+Using a standalone release build instead? Skip straight to unzipping it and running `oneencode.exe` — no config to copy first, see below. Everything below is for running from source.
 
 ```bash
 npm install
 npm run web:install        # dashboard frontend deps
 npm run web:build          # build the dashboard frontend
 
-cp config/legs.example.yaml config/legs.local.yaml
-cp config/secrets.local.example.yaml config/secrets.local.yaml
-# edit both with your real renditions/legs/destination URLs — never commit these
-
 npm run probe:nvenc        # measure this machine's real NVENC session ceiling
 
-npm run dev                # start the orchestrator + dashboard against legs.local.yaml
+npm run dev                # start the orchestrator + dashboard
+```
+
+No `config/legs.local.yaml`? OneEncode auto-generates a safe default on first run (one local-file leg, no real credentials needed) so it starts either way — the dashboard shows a banner when you're on it. To set up real destinations instead of the default:
+
+```bash
+cp config/legs.example.yaml config/legs.local.yaml
+cp config/secrets.local.example.yaml config/secrets.local.yaml
+# edit both with your real renditions/legs/destination URLs — never commit these, then restart
 ```
 
 Then open the dashboard (`http://127.0.0.1:4771` by default) and use the local auth token generated on first run to log in.

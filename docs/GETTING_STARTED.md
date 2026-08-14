@@ -45,7 +45,7 @@ npm run web:install    # installs the dashboard frontend's own dependencies
 
 ## 3. First-time config
 
-OneEncode reads two gitignored local files that never get committed — copy the templates:
+OneEncode reads two gitignored local files that never get committed. **You can actually skip this step** — if `config/legs.local.yaml` doesn't exist, OneEncode auto-generates a safe default on startup (one local-file leg, no real credentials needed) so it runs either way, with a banner in the dashboard telling you you're on it. This tutorial still walks through setting up the templates by hand, since you'll want to understand the shape before adding a real platform in step 9:
 
 ```bash
 cp config/legs.example.yaml config/legs.local.yaml

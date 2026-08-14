@@ -127,6 +127,7 @@ Copy-Item -Path "tools/mediamtx/LICENSE" -Destination "$releaseDir/tools/mediamt
 
 New-Item -ItemType Directory -Force -Path "$releaseDir/config" | Out-Null
 Copy-Item -Path "config/legs.example.yaml" -Destination "$releaseDir/config/legs.example.yaml" -Force
+Copy-Item -Path "config/legs.default.yaml" -Destination "$releaseDir/config/legs.default.yaml" -Force
 Copy-Item -Path "config/secrets.local.example.yaml" -Destination "$releaseDir/config/secrets.local.example.yaml" -Force
 Copy-Item -Path "config/platformProfiles.yaml" -Destination "$releaseDir/config/platformProfiles.yaml" -Force
 Copy-Item -Path "config/mediamtx.yml" -Destination "$releaseDir/config/mediamtx.yml" -Force
@@ -146,14 +147,22 @@ ffmpeg-LICENSE.txt in this folder for the license and source-availability
 notice).
 
 To run:
-  1. Copy config/legs.example.yaml -> config/legs.local.yaml and
-     config/secrets.local.example.yaml -> config/secrets.local.yaml, then
-     fill in your real renditions/legs/destination URLs.
-  2. Open a terminal IN THIS FOLDER (everything resolves relative to the
-     current working directory, not the exe's own location).
-  3. Run oneencode.exe
-  4. The dashboard opens automatically in your default browser, already
+  1. Just run oneencode.exe -- no config needed first. If config/legs.local.yaml
+     doesn't exist, a safe default (one local-file leg, no real credentials
+     needed) is generated automatically so it starts and proves the pipeline
+     works; the dashboard shows a banner when you're running on it.
+  2. The dashboard opens automatically in your default browser, already
      logged in.
+  3. To add real platform destinations instead of the default: copy
+     config/legs.example.yaml -> config/legs.local.yaml and
+     config/secrets.local.example.yaml -> config/secrets.local.yaml, fill in
+     your real renditions/legs/destination URLs, then restart oneencode.exe
+     (or use the dashboard's Configure tab instead of hand-editing).
+
+Run it from a terminal IN THIS FOLDER if you want to see the console output
+(everything resolves relative to the current working directory, not the
+exe's own location) -- double-clicking also works, console output still
+gets mirrored to logs/oneencode-console-<date>.log either way.
 
 Full setup walkthrough: docs/GETTING_STARTED.md in the source repository
 (https://github.com/k8se10/OneEncode).

@@ -13,7 +13,11 @@ import { redactObject } from "../logging/redact.js";
  * dashboard existed. See CLAUDE.md architecture decision #8 for the full
  * scope note.
  */
-export function createApiRouter(pipeline: RunningPipeline, liveState: LiveStateTracker): Router {
+export function createApiRouter(
+  pipeline: RunningPipeline,
+  liveState: LiveStateTracker,
+  options: { usingDefaultConfig?: boolean } = {},
+): Router {
   const router = Router();
 
   router.get("/status", (_req, res) => {
@@ -46,7 +50,13 @@ export function createApiRouter(pipeline: RunningPipeline, liveState: LiveStateT
       };
     });
 
-    res.json({ legs, renditions, encode: { state: encodeState }, broadcastArmed: pipeline.isArmed() });
+    res.json({
+      legs,
+      renditions,
+      encode: { state: encodeState },
+      broadcastArmed: pipeline.isArmed(),
+      usingDefaultConfig: options.usingDefaultConfig ?? false,
+    });
   });
 
   // Broadcast arm switch: the gate in front of every rtmp-push leg (real

@@ -67,10 +67,15 @@ async function main(): Promise<void> {
     }
     throw err;
   }
-  const { config, destinations } = loaded;
+  const { config, destinations, usingDefaultConfig } = loaded;
+  if (usingDefaultConfig) {
+    console.log(
+      `[oneencode] no config/legs.local.yaml found — generated a safe default (config/legs.default.yaml: one local-file leg, no real platform credentials needed). Customize it via the dashboard or config/legs.local.yaml; see docs/CONFIGURATION.md.`,
+    );
+  }
 
   const pipeline = await startPipeline(config, destinations);
-  const ui = startUiServer(pipeline);
+  const ui = startUiServer(pipeline, { usingDefaultConfig });
   // Passing the token in the auto-launch URL is a deliberate, documented
   // relaxation of "never put the token in a URL" (CLAUDE.md's UI code
   // rules) — same exception already carved out for the WebSocket connection

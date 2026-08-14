@@ -1,0 +1,54 @@
+# Auto-generated on first run if config/legs.local.yaml doesn't exist yet
+# (see src/config/load.ts) -- copied verbatim to config/legs.local.yaml so
+# the orchestrator can actually start with zero manual setup, rather than
+# refusing to run until you hand-copy a template. This is the safest
+# possible default: a single local-file leg, no real platform credentials
+# needed, no external side effect.
+#
+# This is NOT the same file as config/legs.example.yaml, which showcases
+# every field (multiple renditions, rendition dedup, a real rtmp-push leg
+# shape) as documentation -- that one deliberately isn't usable as-is since
+# its rtmp-push legs reference secrets that don't exist yet. This one is
+# meant to actually run.
+#
+# Customize this (config/legs.local.yaml, once generated) freely -- add real
+# platform legs through the dashboard or by hand, following
+# config/legs.example.yaml or docs/CONFIGURATION.md as a reference.
+
+ingest:
+  listenUrl: "rtmp://127.0.0.1:1935/ingest/live"
+
+relay:
+  url: "rtmp://127.0.0.1:1935/relay/live"
+  encoder: h264_nvenc
+  preset: p1
+  tuneLowLatency: true
+  bitrateKbps: 40000
+
+encoderPriority:
+  - h264_nvenc
+  - h264_amf
+  - libx264
+
+renditions:
+  - id: default-1080p60
+    resolution: { width: 1920, height: 1080 }
+    fps: 60
+    videoBitrateKbps: 6000
+    audioBitrateKbps: 160
+    keyframeIntervalSec: 2
+    encoderPreference: [h264_nvenc, h264_amf, libx264]
+
+legs:
+  - id: local-archive
+    enabled: true
+    type: local-file
+    renditionId: default-1080p60
+    outputDir: recordings
+    filenamePattern: "archive_{timestamp}.mp4"
+    priority: 10
+
+restartPolicy:
+  maxRestartsPerHour: 5
+  backoffInitialMs: 2000
+  backoffMaxMs: 60000

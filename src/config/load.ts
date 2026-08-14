@@ -7,7 +7,31 @@ export class ConfigError extends Error {}
 
 const CONFIG_DIR = path.resolve(process.cwd(), "config");
 const LEGS_LOCAL_PATH = path.join(CONFIG_DIR, "legs.local.yaml");
+const LEGS_DEFAULT_PATH = path.join(CONFIG_DIR, "legs.default.yaml");
 const SECRETS_LOCAL_PATH = path.join(CONFIG_DIR, "secrets.local.yaml");
+
+/**
+ * First-run UX: a missing legs.local.yaml used to be a hard startup error
+ * ("copy the example and fill it in yourself") -- real friction for a
+ * standalone release meant to be click-and-run. Now it's auto-generated
+ * from the committed, safe-by-construction config/legs.default.yaml (a
+ * single local-file leg, no real credentials needed, no external side
+ * effect) so the orchestrator can actually start on a completely fresh
+ * install. A missing/invalid legs.local.yaml that *does* exist still fails
+ * loudly -- this only fires when the file is absent entirely, never
+ * silently overwrites a real (if broken) config.
+ */
+function ensureLegsLocalExists(): boolean {
+  if (fs.existsSync(LEGS_LOCAL_PATH)) return false;
+  if (!fs.existsSync(LEGS_DEFAULT_PATH)) {
+    throw new ConfigError(
+      `config/legs.local.yaml not found, and config/legs.default.yaml (the auto-generated fallback template) is also missing. Copy config/legs.example.yaml to config/legs.local.yaml and fill in real values before starting.`,
+    );
+  }
+  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  fs.copyFileSync(LEGS_DEFAULT_PATH, LEGS_LOCAL_PATH);
+  return true;
+}
 
 function readYamlFile(filePath: string): unknown {
   const raw = fs.readFileSync(filePath, "utf8");
@@ -47,15 +71,12 @@ export interface ResolvedDestinations {
 export interface LoadedConfig {
   config: RootConfig;
   destinations: ResolvedDestinations;
+  /** True when legs.local.yaml didn't exist and was just auto-generated from legs.default.yaml this call. */
+  usingDefaultConfig: boolean;
 }
 
 export function loadConfig(): LoadedConfig {
-  if (!fs.existsSync(LEGS_LOCAL_PATH)) {
-    throw new ConfigError(
-      `config/legs.local.yaml not found. Copy config/legs.example.yaml to ` +
-        `config/legs.local.yaml and fill in real values before starting.`,
-    );
-  }
+  const usingDefaultConfig = ensureLegsLocalExists();
 
   const rawConfig = readYamlFile(LEGS_LOCAL_PATH);
   const parseResult = rootConfigSchema.safeParse(rawConfig);
@@ -92,5 +113,5 @@ export function loadConfig(): LoadedConfig {
   // Duplicate leg/rendition ids and dangling renditionId references are
   // already rejected by rootConfigSchema's superRefine above.
 
-  return { config, destinations: { rtmpUrlByLegId } };
+  return { config, destinations: { rtmpUrlByLegId }, usingDefaultConfig };
 }
