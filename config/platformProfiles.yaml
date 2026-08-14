@@ -87,3 +87,32 @@ platforms:
       Twitch/YouTube's, historically favoring 720p30 as a safe baseline.
       Higher resolutions/framerates are supported with correspondingly
       higher recommended bitrates not captured in this single default entry.
+
+  - platformName: TikTok LIVE
+    sourcedDate: "2026-08-14"
+    confidence: medium
+    sourceNote: "TikTok LIVE Studio's own operation manual plus general third-party RTMP-to-TikTok guidance (WebSearch, not a live fetch — see CLAUDE.md's TikTok access-model note for the bigger caveat)"
+    recommended:
+      resolution: { width: 1920, height: 1080 }
+      fps: 30
+      videoBitrateKbps: 6000
+      audioBitrateKbps: 160
+      keyframeIntervalSec: 2
+    notes: >
+      TikTok publishes a bitrate RANGE by resolution (roughly 3000-6000 kbps
+      at 720p, 6000-9000 kbps at 1080p) — this entry uses a mid/low-end
+      single value, same pattern as the YouTube entry above. CFR (constant
+      frame rate) is required — do not change resolution/fps mid-stream.
+      H.264 and H.265 are both supported by TikTok LIVE Studio; this project
+      still only configures H.264 anywhere (see CLAUDE.md's H.264-only
+      note), so treat H.265 as unused here regardless of TikTok's own
+      support. NOT YET WIRED AS A REAL LEG: unlike every other platform in
+      this file, TikTok has no open self-serve RTMP signup — access is
+      gated (either TikTok's own "LIVE Studio"/"Cast to PC" feature, which
+      is eligibility-gated and issues a NEW session key every broadcast, or
+      going through a TikTok LIVE agency/Creator Network, whose credential
+      stability is unconfirmed). This entry documents the ingest spec ahead
+      of time per this project's own Phase 5 pattern (architecture decision
+      #10) but the config/UX question of how to actually hold a TikTok
+      credential is deliberately deferred until the real credential type
+      (static vs. per-session) is known — see CLAUDE.md for the full note.
