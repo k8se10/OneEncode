@@ -6,9 +6,11 @@ For the full config schema, rendition/leg reference, and encoder details, see [`
 
 ## 1. Prerequisites
 
-You need:
+**If you downloaded a standalone release build** (a folder with `oneencode.exe` in it, produced by `npm run package:win`), you can skip this whole section — FFmpeg, MediaMTX, and Node itself are all bundled in that folder already. Just go to the folder and run `oneencode.exe`; the rest of this tutorial (from step 3 onward) still applies for configuring it.
 
-- **FFmpeg**, available on your system `PATH`. OneEncode does not bundle or redistribute it. Install it however you prefer (e.g. via [Chocolatey](https://community.chocolatey.org/packages/ffmpeg) on Windows: `choco install ffmpeg`), then confirm it's reachable:
+**If you're running from source** (`npm run dev`), you need:
+
+- **FFmpeg**, available on your system `PATH`. Not committed to this repo — install it however you prefer (e.g. via [Chocolatey](https://community.chocolatey.org/packages/ffmpeg) on Windows: `choco install ffmpeg`), then confirm it's reachable:
 
   ```bash
   ffmpeg -version
@@ -30,7 +32,7 @@ You need:
   2. Extract `mediamtx.exe` into `tools/mediamtx/mediamtx.exe` in this repo (create the folder if it doesn't exist).
   3. That's it — `config/mediamtx.yml` (already committed in this repo) configures it; you don't need to touch MediaMTX's own config yourself.
 
-There's also a standalone packaged Windows executable (`npm run package:win`) that bundles the Node orchestrator (and optionally FFmpeg) into a single `.exe`, meant for deploying to a dedicated streaming PC without installing Node.js there. This tutorial uses the normal Node.js development path (`npm run dev`); if you specifically want the packaged-exe path instead, build it from a working dev setup first — it's not a separate install method for a first-time user.
+If you'd rather build the standalone package yourself instead of continuing with the source path below, run `npm run package:win` from a working dev setup (i.e. after finishing this prerequisites section) — it produces a `dist-release/OneEncode/` folder with `oneencode.exe` and every dependency (Node, FFmpeg, MediaMTX) bundled in, ready to copy to another machine.
 
 ## 2. Clone and install
 

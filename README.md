@@ -17,7 +17,7 @@ OneEncode decodes the source once and splits the decoded frames into per-renditi
 - **Local web dashboard** — live per-leg status (fps/bitrate/dropped+duplicated frames), rendition and leg CRUD, and stop/restart controls, bound to `127.0.0.1` only and gated behind a local auth token.
 - **Manual broadcast-arm safety gate** — every destination leg that pushes to a real platform starts staged, not running, even if enabled in config. Nothing reaches a real platform until you arm broadcasting and hit "Go Live" on that leg. Disarming immediately stops every live push.
 - **Structured, size-bounded logging** — both the JSON-Lines event log and the always-on console mirror rotate past a size cap and prune old files, so a long-running install's `logs/` directory doesn't grow without bound.
-- **Standalone Windows exe** — package the orchestrator + dashboard into a single `.exe` for a dedicated streaming PC with no Node.js install required (`npm run package:win`).
+- **Standalone, click-and-run Windows release** — `npm run package:win` produces a folder with `oneencode.exe` plus every runtime dependency bundled alongside it (Node itself, the built dashboard, MediaMTX, and FFmpeg) — nothing to install on the target machine.
 
 ## How it fits together
 
@@ -44,13 +44,19 @@ A local web dashboard (Express + WebSocket backend, React frontend, `127.0.0.1`-
 
 ## Requirements
 
+**Standalone release build** (`npm run package:win`, or a downloaded release .exe): just Windows. FFmpeg, MediaMTX, and Node itself are all bundled — click `oneencode.exe` and go, nothing else to install (see [Licensing](#license) for what that bundling means for each dependency's own license).
+
+**Running from source** (`npm run dev`):
 - Windows
-- [FFmpeg](https://ffmpeg.org/) on `PATH`, built with NVENC/AMF support if you want hardware encode — not bundled or redistributed by this repo, install it yourself
-- Node.js 20+ (or use the standalone `.exe` build, which needs no separate Node install)
+- [FFmpeg](https://ffmpeg.org/) on `PATH`, built with NVENC/AMF support if you want hardware encode — not committed to this repo, install it yourself
+- Node.js 20+
 - [MediaMTX](https://github.com/bluenviron/mediamtx) — download it yourself and place the binary at `tools/mediamtx/mediamtx.exe` (gitignored, not committed to the repo, and not auto-fetched by any script here — see [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) for the exact steps)
-- An NVIDIA and/or AMD GPU for hardware-accelerated encode; falls back to `libx264`/`libx265` on CPU otherwise
+
+Either way: an NVIDIA and/or AMD GPU for hardware-accelerated encode; falls back to `libx264`/`libx265` on CPU otherwise.
 
 ## Quick start
+
+Using a standalone release build instead? Skip straight to unzipping it and running `oneencode.exe` — everything below is for running from source.
 
 ```bash
 npm install
@@ -101,4 +107,8 @@ npm run bench:oneencode    # single-decode/dedup design benchmark
 
 Source-available under a custom license — see [`LICENSE`](./LICENSE). Free to use, modify, and fork; the source may never be sold, paywalled, or otherwise charged for by anyone but the copyright holder. This does not meet the OSI's formal "open source" definition (which forbids restricting commercial use) — "source-available" is the accurate term here. Distribution must retain attribution and a link back to this repository. Using OneEncode to push to any platform still requires your own account and agreement to that platform's own terms — no rights to any third-party platform's trademarks/APIs/services are granted by this license.
 
-[MediaMTX](https://github.com/bluenviron/mediamtx) (MIT License) is used as the local relay server; it's a required external dependency you download and place yourself (`tools/mediamtx/mediamtx.exe`, gitignored), not bundled in this repository. FFmpeg is a required external dependency, installed separately by the user; its license depends on your specific build's configuration.
+**Third-party components — not bundled in the git repo itself, but bundled into standalone release builds** (`npm run package:win`) for a click-and-run install:
+- [MediaMTX](https://github.com/bluenviron/mediamtx) (MIT License) — the local relay server. Permissive license, no redistribution concerns; bundled as-is with its license file alongside it.
+- [FFmpeg](https://ffmpeg.org/) — license depends on build configuration; a release build compiled with `--enable-gpl` (needed for the `libx264`/`libx265` CPU fallback encoders) is GPLv3. Bundled release builds include the GPL license text and a source-availability notice (FFmpeg's own source is always public upstream) alongside the binary. OneEncode invokes ffmpeg as a separate child process, not as a linked library, so this doesn't affect OneEncode's own license.
+
+Both are required external dependencies when running from source (`npm run dev`) — see [Requirements](#requirements).

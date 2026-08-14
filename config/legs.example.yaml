@@ -40,7 +40,7 @@ renditions:
     keyframeIntervalSec: 2
     encoderPreference: [h264_nvenc, h264_amf, libx264]
 
-  - id: 720p60-3.5M
+  - id: 720p60-3_5M
     resolution: { width: 1280, height: 720 }
     fps: 60
     videoBitrateKbps: 3500
@@ -74,7 +74,7 @@ legs:
   - id: platform-b
     enabled: true
     type: rtmp-push
-    renditionId: 720p60-3.5M
+    renditionId: 720p60-3_5M
     destinationUrlEnv: ONEENCODE_PLATFORM_B_URL
     priority: 5
 
