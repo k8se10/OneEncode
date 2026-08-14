@@ -1,5 +1,21 @@
 # PATCHNOTES
 
+## v0.1.0 — First public release
+
+Everything below this entry (and the entries following it) is the development history that led here. Summary of what's actually shipping in this first tagged release:
+
+- **Core pipeline**: single decode of the source, split into N rendition-encode branches inside one combined FFmpeg process, with rendition-level dedup (identical profiles share one encode) and per-destination failure isolation (every leg is its own supervised OS process).
+- **Platform support**: YouTube, Twitch, and Kick are live-tested working `rtmp-push` legs. Local-file archival works for any rendition. TikTok is investigated but not implemented — a real platform-side access constraint, not a code gap (see docs/TROUBLESHOOTING.md).
+- **Encoder handling**: NVENC → AMF → CPU fallback per rendition, with a real probed NVENC session ceiling (never assumed).
+- **Local web dashboard**: live per-leg status, full rendition/leg CRUD, stop/restart controls, a manual broadcast-arm safety gate in front of every real-platform push, token-gated and bound to `127.0.0.1` only.
+- **First-run UX**: a safe default config auto-generates on a fresh install (see the entry directly below) — genuinely zero-config to first working local recording.
+- **Standalone release packaging**: `oneencode.exe` with FFmpeg, MediaMTX, and the dashboard all bundled — click-and-run, no separate installs.
+- **Operational hygiene**: size-bounded/rotated logging, redacted secrets at the logging layer (with a real incident and fix behind that rule), a full pre-release git-history audit and scrub.
+- **Known limitations, stated plainly**: H.264 only right now (a current MediaMTX RTMP-output limitation, not fundamental); designed for a dual-PC setup as the primary target, single-PC works as a fallback with less headroom; NVENC ceilings vary by machine and must be probed, not assumed.
+- **Docs**: README, `docs/GETTING_STARTED.md`, `docs/CONFIGURATION.md`, `docs/TROUBLESHOOTING.md` — all cross-checked against the real current source, not just summarized history.
+
+Full unabridged incident-by-incident history follows below, oldest work at the bottom.
+
 ## First-run UX — no more manual config copy just to get the app to start
 
 Direct user feedback: "it should also make default configs and such the ux is terrible rn." Previously, a missing `config/legs.local.yaml` was a hard startup error telling you to go copy-and-edit `legs.example.yaml` by hand — real friction, especially now that the standalone release is supposed to be click-and-run.
