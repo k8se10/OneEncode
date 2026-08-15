@@ -267,4 +267,97 @@ describe("buildCombinedRelayAndRenditionsArgv", () => {
     expect(argv).toContain("[vr0]");
     expect(argv).not.toContain("-vf"); // scaling happens inside filter_complex, not as a separate -vf
   });
+
+  describe("decodeHwaccel (CUDA decode/scale — real nvidia-smi dmon finding: enc busy, dec idle)", () => {
+    it("omits -hwaccel and uses plain scale when decodeHwaccel is not set (default off)", () => {
+      const rendition: Rendition = {
+        id: "r1",
+        resolution: { width: 1920, height: 1080 },
+        fps: 60,
+        videoBitrateKbps: 6000,
+        audioBitrateKbps: 160,
+        keyframeIntervalSec: 2,
+        encoderPreference: ["h264_nvenc"],
+      };
+      const argv = buildCombinedRelayAndRenditionsArgv(
+        "rtmp://127.0.0.1:1935/ingest/live",
+        "rtmp://127.0.0.1:1935/relay/live",
+        relayOpts,
+        [{ rendition, encoder: "h264_nvenc", outputUrl: "rtmp://127.0.0.1:1935/rendition/r1/live" }],
+      );
+      expect(argv).not.toContain("-hwaccel");
+      const filterComplex = argv[argv.indexOf("-filter_complex") + 1];
+      expect(filterComplex).toContain("scale=1920:1080");
+      expect(filterComplex).not.toContain("scale_cuda");
+      expect(filterComplex).not.toContain("hwdownload");
+    });
+
+    it("adds -hwaccel cuda and uses scale_cuda for an all-NVENC target set, no hwdownload needed", () => {
+      const rendition: Rendition = {
+        id: "r1",
+        resolution: { width: 1920, height: 1080 },
+        fps: 60,
+        videoBitrateKbps: 6000,
+        audioBitrateKbps: 160,
+        keyframeIntervalSec: 2,
+        encoderPreference: ["h264_nvenc"],
+      };
+      const argv = buildCombinedRelayAndRenditionsArgv(
+        "rtmp://127.0.0.1:1935/ingest/live",
+        "rtmp://127.0.0.1:1935/relay/live",
+        relayOpts,
+        [{ rendition, encoder: "h264_nvenc", outputUrl: "rtmp://127.0.0.1:1935/rendition/r1/live" }],
+        { decodeHwaccel: true },
+      );
+      const hwaccelIdx = argv.indexOf("-hwaccel");
+      expect(hwaccelIdx).toBeGreaterThan(-1);
+      expect(argv[hwaccelIdx + 1]).toBe("cuda");
+      expect(argv).toContain("-hwaccel_output_format");
+      // -hwaccel must come before -i so it applies to the input, not an output.
+      expect(hwaccelIdx).toBeLessThan(argv.indexOf("-i"));
+
+      const filterComplex = argv[argv.indexOf("-filter_complex") + 1];
+      expect(filterComplex).toContain("scale_cuda=1920:1080");
+      expect(filterComplex).not.toContain("hwdownload"); // NVENC consumes CUDA frames directly
+      expect(argv).toContain("[vr0s]"); // mapped straight from the scaled CUDA label
+    });
+
+    it("downloads back to system memory only for a non-NVENC target when decodeHwaccel is on (mixed NVENC + libx264)", () => {
+      const nvencRendition: Rendition = {
+        id: "nvenc-target",
+        resolution: { width: 1920, height: 1080 },
+        fps: 60,
+        videoBitrateKbps: 6000,
+        audioBitrateKbps: 160,
+        keyframeIntervalSec: 2,
+        encoderPreference: ["h264_nvenc"],
+      };
+      const cpuRendition: Rendition = {
+        id: "cpu-target",
+        resolution: { width: 1280, height: 720 },
+        fps: 60,
+        videoBitrateKbps: 3500,
+        audioBitrateKbps: 128,
+        keyframeIntervalSec: 2,
+        encoderPreference: ["libx264"],
+      };
+      const argv = buildCombinedRelayAndRenditionsArgv(
+        "rtmp://127.0.0.1:1935/ingest/live",
+        "rtmp://127.0.0.1:1935/relay/live",
+        relayOpts,
+        [
+          { rendition: nvencRendition, encoder: "h264_nvenc", outputUrl: "rtmp://127.0.0.1:1935/rendition/nvenc-target/live" },
+          { rendition: cpuRendition, encoder: "libx264", outputUrl: "rtmp://127.0.0.1:1935/rendition/cpu-target/live" },
+        ],
+        { decodeHwaccel: true },
+      );
+
+      const filterComplex = argv[argv.indexOf("-filter_complex") + 1];
+      expect(filterComplex).toContain("scale_cuda=1920:1080"); // NVENC target: GPU scale, no download
+      expect(filterComplex).toContain("scale_cuda=1280:720"); // CPU target: GPU scale first...
+      expect(filterComplex).toContain("hwdownload,format=nv12"); // ...then downloaded before libx264
+      expect(argv).toContain("[vr0s]"); // NVENC target maps from the CUDA-resident scaled label
+      expect(argv).toContain("[vr1sd]"); // libx264 target maps from the downloaded label
+    });
+  });
 });

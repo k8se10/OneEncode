@@ -74,6 +74,18 @@ export const relayConfigSchema = z.object({
   preset: z.string().default("p1"),
   tuneLowLatency: z.boolean().default(true),
   bitrateKbps: z.number().positive().default(40000),
+  /**
+   * Decode the ingest source via NVDEC (`-hwaccel cuda`) instead of
+   * software/CPU decode, keeping frames in GPU memory through scaling
+   * (`scale_cuda`) for any rendition using an NVENC encoder. Off by
+   * default -- explicit opt-in, not auto-detected, since it requires a
+   * real NVIDIA GPU/driver and this project never assumes hardware
+   * presence (same posture as the NVENC session ceiling, which is probed,
+   * not assumed). Renditions falling back to AMF/libx264/libx265 still
+   * work when this is on -- frames are downloaded back to system memory
+   * for them (see buildCombinedRelayAndRenditionsArgv).
+   */
+  decodeHwaccel: z.boolean().default(false),
 });
 
 export const restartPolicySchema = z.object({

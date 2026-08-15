@@ -1,4 +1,5 @@
 import type { EncoderName, Rendition } from "../config/schema.js";
+import { isNvencEncoder } from "../nvenc/sessionTracker.js";
 
 /**
  * Encoder-specific rate-control args. Kept isolated here so adding a new
@@ -85,9 +86,10 @@ function videoEncodeArgs(encoder: EncoderName, rendition: Rendition): string[] {
   }
 }
 
-function scaleFilterExpr(rendition: Rendition): string | undefined {
+function scaleFilterExpr(rendition: Rendition, useCuda = false): string | undefined {
   if (rendition.resolution === "source") return undefined;
-  return `scale=${rendition.resolution.width}:${rendition.resolution.height}`;
+  const filterName = useCuda ? "scale_cuda" : "scale";
+  return `${filterName}=${rendition.resolution.width}:${rendition.resolution.height}`;
 }
 
 function scaleFilterArgs(rendition: Rendition): string[] {
@@ -259,33 +261,77 @@ export interface RenditionEncodeTarget {
  * Falls back to a plain `buildRelayArgv` (no filter_complex) when there
  * are no rendition targets, rather than emitting a degenerate zero-way
  * split.
+ *
+ * `decodeHwaccel` (config: `relay.decodeHwaccel`, off by default): decodes
+ * the ingest via NVDEC (`-hwaccel cuda -hwaccel_output_format cuda`)
+ * instead of software/CPU decode. Found via a real `nvidia-smi dmon`
+ * observation — the encode (`enc`) engine ran up to ~90% while decode
+ * (`dec`) sat at 0%, because nothing here ever told ffmpeg to use the
+ * GPU's decode engine for the input side; only the encoders were hardware.
+ * When on, scaling for any target also moves to GPU (`scale_cuda` instead
+ * of `scale`), so an NVENC-encoded target never leaves GPU memory between
+ * decode and encode. A target using a non-NVENC encoder (AMF/libx264/
+ * libx265 — e.g. after NVENC session-ceiling fallback) still works: its
+ * branch gets an explicit `hwdownload,format=nv12` step back to system
+ * memory before that encoder, since only NVENC can consume CUDA frames
+ * directly.
+ *
+ * **Live-verified 2026-08-15**, not just built: a real-time-paced
+ * (`-re`, matching how a live RTMP source actually arrives), non-looping,
+ * 45s two-rendition run (1080p60 + 720p60, both NVENC) showed `nvidia-smi
+ * dmon`'s `dec` column go from a flat 0% to ~19-20% while `enc` ran
+ * 44-49% for the two branches combined, speed held at 1.00-1.01x
+ * throughout, clean exit, both outputs byte-sane. **Caveat found and worth
+ * keeping**: an EARLIER attempt using `-stream_loop` to extend a short
+ * synthetic source hit a real, reproducible `scale_cuda` filter-graph
+ * reinitialization error exactly at the loop boundary ("Impossible to
+ * convert... auto_scale_0", error -40) — isolated to the loop-induced
+ * stream discontinuity itself (a `-stream_loop` artifact), not a flaw in
+ * this filter graph: the identical graph ran clean for the full duration
+ * once tested without looping. Relevant if a future benchmark/test script
+ * exercises this path with `-stream_loop` — don't mistake that specific
+ * failure mode for a real bug here without re-confirming against a
+ * non-looping or genuinely live source first.
  */
 export function buildCombinedRelayAndRenditionsArgv(
   ingestUrl: string,
   relayPublishUrl: string,
   relayOpts: { encoder: EncoderName; preset: string; bitrateKbps: number },
   renditionTargets: RenditionEncodeTarget[],
+  options: { decodeHwaccel?: boolean } = {},
 ): string[] {
   if (renditionTargets.length === 0) {
     return buildRelayArgv(ingestUrl, relayPublishUrl, relayOpts);
   }
 
+  const useCuda = options.decodeHwaccel === true;
   const splitLabels = renditionTargets.map((_, i) => `vr${i}`);
   const filterParts = [`[0:v]split=${splitLabels.length}${splitLabels.map((l) => `[${l}]`).join("")}`];
 
   const renditionMapLabels = renditionTargets.map((target, i) => {
-    const rawLabel = splitLabels[i];
-    const scaleExpr = scaleFilterExpr(target.rendition);
-    if (!scaleExpr) return rawLabel;
-    const scaledLabel = `${rawLabel}s`;
-    filterParts.push(`[${rawLabel}]${scaleExpr}[${scaledLabel}]`);
-    return scaledLabel;
+    let currentLabel = splitLabels[i];
+
+    const scaleExpr = scaleFilterExpr(target.rendition, useCuda);
+    if (scaleExpr) {
+      const scaledLabel = `${currentLabel}s`;
+      filterParts.push(`[${currentLabel}]${scaleExpr}[${scaledLabel}]`);
+      currentLabel = scaledLabel;
+    }
+
+    if (useCuda && !isNvencEncoder(target.encoder)) {
+      const downloadedLabel = `${currentLabel}d`;
+      filterParts.push(`[${currentLabel}]hwdownload,format=nv12[${downloadedLabel}]`);
+      currentLabel = downloadedLabel;
+    }
+
+    return currentLabel;
   });
 
   const argv: string[] = [
     "-hide_banner",
     "-loglevel", "warning",
     "-stats",
+    ...(useCuda ? ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"] : []),
     // A real live RTMP source (unlike the synthetic lavfi source every
     // prior test in this project used) can need more time/data than
     // ffmpeg's defaults (analyzeduration=5s, probesize=5MB) allow before

@@ -16,6 +16,7 @@ export function buildCombinedEncodeArgv(config: RootConfig, renditionTargets: Re
     config.relay.url,
     { encoder: config.relay.encoder, preset: config.relay.preset, bitrateKbps: config.relay.bitrateKbps },
     renditionTargets,
+    { decodeHwaccel: config.relay.decodeHwaccel },
   );
 }
 

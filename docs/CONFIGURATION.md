@@ -202,6 +202,17 @@ restartPolicy:
   host/port are actually used now. `relay.encoder`/`preset`/`tuneLowLatency`/
   `bitrateKbps` only matter for the degenerate zero-rendition fallback case
   and can be left at their defaults.
+- **`relay.decodeHwaccel`** (default `false`) — decode the incoming source
+  via the GPU's NVDEC engine (`-hwaccel cuda`) instead of software/CPU
+  decode, with GPU-side scaling (`scale_cuda`) for any rendition using an
+  NVENC encoder. Off by default — explicit opt-in, since it needs a real
+  NVIDIA GPU and this project never assumes hardware presence (same
+  posture as the NVENC session ceiling). Turn it on if `nvidia-smi dmon`
+  shows your encode (`enc`) engine busy while decode (`dec`) sits at 0% —
+  that means decode is running on the CPU instead of the otherwise-idle GPU
+  decode engine. A rendition that falls back to AMF/libx264/libx265 still
+  works with this on; its branch gets an extra `hwdownload` step back to
+  system memory, since only NVENC can consume GPU-resident frames directly.
 - **`encoderPriority`** — the default fallback order used if a rendition
   doesn't set its own `encoderPreference` explicitly. (In practice, always
   set `encoderPreference` per-rendition — the dashboard always does.)

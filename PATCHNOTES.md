@@ -1,5 +1,22 @@
 # PATCHNOTES
 
+## Added — optional GPU-side decode (NVDEC), fixing an idle decode engine while encode ran near 90%
+
+User observation via `nvidia-smi dmon`: the encode (`enc`) engine ran as high as 90% while decode (`dec`) sat flat at 0% the whole time. Root cause, confirmed in code: `buildCombinedRelayAndRenditionsArgv` never passed any `-hwaccel` flag on the input side — every rendition's *encoder* was hardware (NVENC), but the *decode* of the incoming source was always plain software/CPU decode via libavcodec. The GPU's decode engine was never used at all.
+
+### Added
+- New config field `relay.decodeHwaccel` (default `false` — explicit opt-in, same posture as the NVENC session ceiling: never assume GPU hardware, always let the user confirm it). When on:
+  - `-hwaccel cuda -hwaccel_output_format cuda` decodes the ingest via NVDEC.
+  - Scaling for any target also moves to GPU (`scale_cuda` instead of `scale`), so an NVENC-encoded rendition never leaves GPU memory between decode and encode — a genuine zero-copy pipeline, not just decode offload.
+  - A rendition falling back to a non-NVENC encoder (AMF/libx264/libx265) still works: its branch gets an explicit `hwdownload,format=nv12` step back to system memory, since only NVENC can consume CUDA-resident frames directly.
+- Confirmed this exact ffmpeg build (gyan.dev essentials, `--enable-cuda-llvm --enable-nvdec --enable-ffnvcodec`) has both `h264_cuvid` and `scale_cuda` available before writing any code — not assumed.
+
+### A real bug found and fixed during verification, not shipped blind
+Initial testing (via `-stream_loop` to extend a short synthetic source for a longer `nvidia-smi dmon` sampling window) hit a real, reproducible crash: `Impossible to convert between the formats supported by the filter 'Parsed_scale_cuda_1' and the filter 'auto_scale_0'` (error -40), consistently at the exact frame count where the loop wrapped. Reproduced identically in both an all-NVENC two-rendition case and a mixed NVENC+libx264 case — ruling out "mixed encoder" as the cause. Isolated by removing the artificial variable: the **identical filter graph ran clean end-to-end with no `-stream_loop`**, both as a fast non-real-time pass and as a `-re` real-time-paced 45-second run. Conclusion: the crash was a `-stream_loop` filter-graph-reinitialization artifact specific to that synthetic-test technique, not a flaw in the CUDA decode/scale pipeline itself. Documented directly in the code comment so a future benchmark script using `-stream_loop` against this path doesn't mistake that failure mode for a real regression.
+
+### Verified live
+A real-time-paced (`-re`), non-looping, 45-second two-rendition run (1080p60 + 720p60, both NVENC) — the closest a local test can get to how a real continuous RTMP/OBS source actually behaves — showed `nvidia-smi dmon`'s `dec` column move from a flat 0% to ~19-20% while `enc` ran 44-49% for both branches combined, `speed` held at 1.00-1.01x the entire time (never fell behind real-time), clean exit code, both output files correctly sized. Windows Task Manager's independent GPU monitor corroborated a real Video Decode spike during an earlier (crashed) attempt too, before the `-stream_loop` issue was isolated and removed. **Not yet run against a real OBS/live-platform stream** — the next real broadcast with `relay.decodeHwaccel: true` set should be spot-checked the same way (`nvidia-smi dmon` during the stream) before this is considered fully proven end to end, same honesty standard as the CBR bufsize fix above.
+
 ## Fixed — "CBR" was allowed to swing like VBR, found via Twitch Inspector
 
 Real destination-side evidence, same lesson as the earlier YouTube-30fps investigation (a destination platform's own tooling can catch things purely local stats can't): Twitch Inspector's bitrate graph for `shared-1080p60` (target 6000kbps CBR) showed a spiky, noisy delivered bitrate swinging roughly 4000–8500+ Kbps over a 2-hour stream — average right on target (6018 vs 6000), but Twitch's own Configuration Check flagged "average bitrate too high... could cause buffering" on the peaks. OneEncode's own leg stats wouldn't have caught this — `drop=`/`dup=`/`speed` don't measure bitrate consistency, only frame counts and pacing.
