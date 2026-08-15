@@ -16,7 +16,15 @@ export function buildCombinedEncodeArgv(config: RootConfig, renditionTargets: Re
     config.relay.url,
     { encoder: config.relay.encoder, preset: config.relay.preset, bitrateKbps: config.relay.bitrateKbps },
     renditionTargets,
-    { decodeHwaccel: config.relay.decodeHwaccel },
+    // config.relay.decodeHwaccel's schema type is "auto" | boolean, but by
+    // the time a RootConfig reaches here it's always already been resolved
+    // to a definite boolean by pipeline.ts's resolveDecodeHwaccel (real
+    // hardware detection happens once at startup, not per-argv-build).
+    // The === true narrowing is defensive typing, not expected runtime
+    // behavior -- "auto" reaching this function would be a real bug
+    // upstream, and this falls back to the safe default (off) rather than
+    // crashing if that ever happens.
+    { decodeHwaccel: config.relay.decodeHwaccel === true },
   );
 }
 

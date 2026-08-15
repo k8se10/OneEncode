@@ -9,6 +9,7 @@ import { groupLegsByRendition, buildRenditionUrl } from "./rendition/group.js";
 import { resolveOutputPath } from "./destinations/localFileDestination.js";
 import { resolveRtmpDestination } from "./destinations/rtmpDestination.js";
 import { loadProbedCeiling, NvencSessionTracker, selectEncoder } from "./nvenc/sessionTracker.js";
+import { probeDecodeHwaccel } from "./nvenc/decodeHwaccelProbe.js";
 
 /** A managed leg's recreate-on-demand descriptor, so a manual restart doesn't need the whole pipeline rebuilt. */
 interface Managed {
@@ -28,6 +29,18 @@ function stagedSupervisor(legId: string): LegSupervisor {
     ready: Promise.resolve(),
     stop: async () => {},
   };
+}
+
+/** Resolves `relay.decodeHwaccel`'s "auto" (the default) into a real, probed boolean — see the field's own schema comment. */
+async function resolveDecodeHwaccel(setting: RootConfig["relay"]["decodeHwaccel"]): Promise<boolean> {
+  if (setting !== "auto") return setting;
+  const available = await probeDecodeHwaccel();
+  console.log(
+    `[oneencode] GPU decode (NVDEC) auto-detected: ${
+      available ? "available -- enabling GPU-side decode/scale" : "not available -- using software decode"
+    }`,
+  );
+  return available;
 }
 
 export interface RunningPipeline {
@@ -78,6 +91,15 @@ export async function startPipeline(config: RootConfig, destinations: ResolvedDe
   console.log(`[oneencode] starting relay server...`);
   const relay: RelayServerHandle = startRelayServer();
   await relay.ready;
+
+  // "auto" (the default) is resolved to a real, empirically-probed boolean
+  // here, once, so nothing downstream (argv building, manual restarts via
+  // buildArgv closures below, the RunningPipeline.config exposed to the
+  // dashboard) needs to know "auto" exists at all -- they only ever see a
+  // definite true/false. Never assumed from GPU vendor/name, same posture
+  // as the NVENC session ceiling probe just below.
+  const decodeHwaccel = await resolveDecodeHwaccel(config.relay.decodeHwaccel);
+  config = { ...config, relay: { ...config.relay, decodeHwaccel } };
 
   const { ceiling: nvencCeiling } = loadProbedCeiling();
   // No reservation for config.relay.encoder here: the relay's own separate

@@ -77,15 +77,22 @@ export const relayConfigSchema = z.object({
   /**
    * Decode the ingest source via NVDEC (`-hwaccel cuda`) instead of
    * software/CPU decode, keeping frames in GPU memory through scaling
-   * (`scale_cuda`) for any rendition using an NVENC encoder. Off by
-   * default -- explicit opt-in, not auto-detected, since it requires a
-   * real NVIDIA GPU/driver and this project never assumes hardware
-   * presence (same posture as the NVENC session ceiling, which is probed,
-   * not assumed). Renditions falling back to AMF/libx264/libx265 still
-   * work when this is on -- frames are downloaded back to system memory
-   * for them (see buildCombinedRelayAndRenditionsArgv).
+   * (`scale_cuda`) for any rendition using an NVENC encoder. Renditions
+   * falling back to AMF/libx264/libx265 still work when this is on --
+   * frames are downloaded back to system memory for them (see
+   * buildCombinedRelayAndRenditionsArgv).
+   *
+   * Default `"auto"`: real, empirical detection at startup
+   * (nvenc/decodeHwaccelProbe.ts actually runs the decode+scale_cuda
+   * chain against a tiny generated clip and checks whether it succeeds) --
+   * never assumed from GPU vendor/name, same "never assume hardware"
+   * posture as the NVENC session ceiling. Explicit `true`/`false` are
+   * still available to force a specific behavior (e.g. if the auto-probe
+   * is ever wrong for a particular driver/GPU combination), but "auto" is
+   * the default so this optimization is on by default wherever it
+   * actually works, with no manual config step required.
    */
-  decodeHwaccel: z.boolean().default(false),
+  decodeHwaccel: z.union([z.literal("auto"), z.boolean()]).default("auto"),
 });
 
 export const restartPolicySchema = z.object({
