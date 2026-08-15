@@ -156,8 +156,9 @@ To run:
   3. To add real platform destinations instead of the default: copy
      config/legs.example.yaml -> config/legs.local.yaml and
      config/secrets.local.example.yaml -> config/secrets.local.yaml, fill in
-     your real renditions/legs/destination URLs, then restart oneencode.exe
-     (or use the dashboard's Configure tab instead of hand-editing).
+     your real renditions/legs/destination URLs (or use the dashboard's
+     Configure tab instead of hand-editing). No restart needed -- changes
+     apply automatically within about a second (hot-reload).
 
 Run it from a terminal IN THIS FOLDER if you want to see the console output
 (everything resolves relative to the current working directory, not the
