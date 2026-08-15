@@ -30,6 +30,14 @@ vi.mock("node:fs", () => ({
     writeFileSync: (p: string, content: string) => {
       files.set(normalize(p), content);
     },
+    // configApi.ts writes atomically (temp file + rename) -- the mock needs
+    // to actually move the content across keys, same as a real rename would.
+    renameSync: (oldPath: string, newPath: string) => {
+      const content = files.get(normalize(oldPath));
+      if (content === undefined) throw new Error(`ENOENT (rename source): ${oldPath}`);
+      files.delete(normalize(oldPath));
+      files.set(normalize(newPath), content);
+    },
   },
 }));
 
@@ -134,7 +142,7 @@ describe("POST /api/config/renditions", () => {
     });
     const body = await res.json();
     expect(res.status).toBe(200);
-    expect(body.restartRequired).toBe(true);
+    expect(body.ok).toBe(true);
 
     const written = yaml.load(files.get(LEGS_LOCAL_PATH) as string) as typeof BASE_CONFIG;
     expect(written.renditions.some((r) => r.id === "new-720p")).toBe(true);
@@ -157,9 +165,9 @@ describe("POST /api/config/renditions", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: "shared-1080p60", resolution: "source", encoderPreference: ["h264_nvenc"] }),
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
     const body = await res.json();
-    expect(body.error).toMatch(/duplicate/i);
+    expect(body.error).toMatch(/already exists/i);
   });
 });
 
@@ -286,5 +294,99 @@ describe("DELETE /api/config/legs/:id", () => {
 
     const secretsYaml = files.get(SECRETS_LOCAL_PATH) as string;
     expect(secretsYaml).not.toContain("ONEENCODE_PLATFORM_A_URL");
+  });
+});
+
+describe("non-destructive writes", () => {
+  const commentedYaml = `# a hand-written header comment explaining this config
+ingest:
+  listenUrl: rtmp://127.0.0.1:1935/ingest/live
+relay:
+  url: rtmp://127.0.0.1:1935/relay/live
+  encoder: h264_nvenc
+  preset: p1
+  tuneLowLatency: true
+  bitrateKbps: 40000
+encoderPriority:
+  - h264_nvenc
+  - h264_amf
+  - libx264
+renditions:
+  - id: shared-1080p60 # a hand-written inline note on this rendition
+    resolution:
+      width: 1920
+      height: 1080
+    fps: 60
+    videoBitrateKbps: 6000
+    audioBitrateKbps: 160
+    keyframeIntervalSec: 2
+    encoderPreference: [h264_nvenc, h264_amf, libx264]
+legs:
+  - id: local-archive-1
+    enabled: true
+    renditionId: shared-1080p60
+    priority: 10
+    type: local-file
+    outputDir: recordings
+    filenamePattern: archive1_{timestamp}.mp4
+  - id: local-archive-2
+    enabled: true
+    renditionId: shared-1080p60
+    priority: 9
+    type: local-file
+    outputDir: recordings
+    filenamePattern: archive2_{timestamp}.mp4
+restartPolicy:
+  maxRestartsPerHour: 5
+  backoffInitialMs: 2000
+  backoffMaxMs: 60000
+`;
+
+  it("preserves a hand-written header comment and an untouched rendition's inline comment when adding a new rendition", async () => {
+    files.set(LEGS_LOCAL_PATH, commentedYaml);
+
+    const res = await fetch(`${baseUrl}/renditions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "new-720p", resolution: { width: 1280, height: 720 }, fps: 30, videoBitrateKbps: 3000, encoderPreference: ["h264_amf"] }),
+    });
+    expect(res.status).toBe(200);
+
+    const written = files.get(LEGS_LOCAL_PATH) as string;
+    expect(written).toContain("# a hand-written header comment explaining this config");
+    expect(written).toContain("# a hand-written inline note on this rendition");
+    expect(written).toContain("new-720p");
+  });
+
+  it("preserves the header comment and other sections when deleting a leg", async () => {
+    files.set(LEGS_LOCAL_PATH, commentedYaml);
+
+    const res = await fetch(`${baseUrl}/legs/local-archive-1`, { method: "DELETE" });
+    expect(res.status).toBe(200);
+
+    const written = files.get(LEGS_LOCAL_PATH) as string;
+    expect(written).toContain("# a hand-written header comment explaining this config");
+    expect(written).toContain("# a hand-written inline note on this rendition");
+    expect(written).not.toContain("local-archive-1");
+  });
+
+  it("writes atomically -- via a temp file renamed over the target, never a direct in-place write", async () => {
+    files.set(LEGS_LOCAL_PATH, commentedYaml);
+    const before = files.size;
+
+    await fetch(`${baseUrl}/renditions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "atomic-test", resolution: "source", encoderPreference: ["h264_nvenc"] }),
+    });
+
+    // The temp file must never remain -- rename() replaces the target in
+    // one step, so exactly the same set of real paths should exist after
+    // as before (no leftover ".tmp-..." key in the mocked filesystem).
+    expect(files.size).toBe(before);
+    expect(files.has(LEGS_LOCAL_PATH)).toBe(true);
+    for (const key of files.keys()) {
+      expect(key).not.toMatch(/\.tmp-/);
+    }
   });
 });

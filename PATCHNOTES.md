@@ -1,5 +1,31 @@
 # PATCHNOTES
 
+## Added — hot-reload and non-destructive config writes
+
+Direct user request: "make sure the app non destructively updates configs and also hot reload is essential now." Previously every config change — dashboard or hand-edit — needed a full manual restart, and dashboard writes re-serialized the whole config from scratch, silently wiping any hand-added YAML comments.
+
+### Hot-reload
+- `src/config/watcher.ts` watches `config/legs.local.yaml` and `config/secrets.local.yaml` (via the directory, filtered by filename — survives editors that save via temp-file-then-rename) and applies a change within about half a second, no restart.
+- `src/config/reconcile.ts`'s `planReconciliation()` — pure, unit-tested decision logic (9 cases): any `ingest`/`relay`/`encoderPriority`/`renditions` change restarts the combined decode/encode process; leg add/remove/edit only touches that one leg's own process.
+- `src/pipeline.ts`'s new `RunningPipeline.reconcile()` executes the plan. `combinedEncode`/`legIds`/`config` all became getters over live closure state so callers never see a stale snapshot after a reconcile.
+- **Safety preserved**: an `rtmp-push` leg always lands staged after any edit — even if it was live and armed — never a silent auto-resumed real-platform push. A combined-process restart doesn't force live legs back to staged; they just briefly lose input and reconnect, same as today's manual restart already does.
+- An invalid edit is logged loudly; the pipeline keeps running unchanged on its last-known-good config. A typo can never crash or interrupt a live broadcast.
+- Also detects a rotated secret (stream key changed, leg config otherwise unchanged) — invisible to a pure config diff, since `LegConfig` never contains the actual secret value — by separately comparing resolved destination URLs.
+
+### Two real bugs found and fixed via live testing
+1. **Spurious combined-process restart on every single reload**, including a pure no-op re-save. Cause: `relay.decodeHwaccel` resolves from `"auto"` to a real boolean once at startup, but a freshly-loaded file still has the raw `"auto"` — comparing those directly made every reload look like a relay change. Fixed to resolve the same way inside `reconcile()`, re-probing only when actually necessary.
+2. **Rotated secrets were invisible to the diff** (see above) — found and closed before it could cause a real "I updated my stream key and nothing happened" surprise.
+
+### Non-destructive writes
+- `src/ui/configApi.ts` switched from `js-yaml`'s whole-file `dump()` to the `yaml` package's comment-preserving `Document`/`YAMLSeq` API — add/edit/delete now operate on the specific rendition/leg node, so hand-added comments elsewhere in the file survive a dashboard save.
+- Every write (both config files) is now atomic — temp file + rename, so a crash mid-write can never leave a torn/corrupt file.
+- Verified the exact `yaml` package API via a real throwaway script before writing any production code.
+
+### Verified live, end to end
+Real orchestrator run against the real dev config, fed a real synthetic RTMP source so the pipeline actually came up (a completely idle ingest blocks startup indefinitely — a real discovery from this same pass). Confirmed live: no-op re-save → no restart; leg add → only that leg starts; leg remove → only that leg stops; rendition bitrate change → combined process restarts with the new value correctly applied, pipeline healthy immediately after. Real dev config backed up and restored byte-identical afterward.
+
+New tests: `tests/config/reconcile.test.ts` (9 cases), `tests/config/watcher.test.ts` (5 cases), plus a new `non-destructive writes` block in `tests/ui/configApi.test.ts` proving comments survive real add/delete operations and no temp file is ever left behind.
+
 ## Added — auto-detected GPU-side decode (NVDEC), fixing an idle decode engine while encode ran near 90%
 
 User observation via `nvidia-smi dmon`: the encode (`enc`) engine ran as high as 90% while decode (`dec`) sat flat at 0% the whole time. Root cause, confirmed in code: `buildCombinedRelayAndRenditionsArgv` never passed any `-hwaccel` flag on the input side — every rendition's *encoder* was hardware (NVENC), but the *decode* of the incoming source was always plain software/CPU decode via libavcodec. The GPU's decode engine was never used at all.

@@ -15,6 +15,7 @@ OneEncode decodes the source once and splits the decoded frames into per-renditi
 - **Per-destination failure isolation** — each destination leg is its own OS process; a platform dropping the connection or a write blocking never touches the others.
 - **Encoder fallback with a real, probed ceiling** — NVENC → AMF → CPU (`libx264`/`libx265`), walked per rendition. The NVENC concurrent-session ceiling is measured on your actual machine/driver (`npm run probe:nvenc`), never assumed.
 - **Local web dashboard** — live per-leg status (fps/bitrate/dropped+duplicated frames), rendition and leg CRUD, and stop/restart controls, bound to `127.0.0.1` only and gated behind a local auth token.
+- **Hot-reload, non-destructively** — edit `config/legs.local.yaml` by hand or through the dashboard and it applies automatically within about a second, restarting only what actually needs it (never the whole app). Dashboard writes edit the specific item you touched in place, so hand-added comments elsewhere in the file survive; every write is atomic. An `rtmp-push` leg always lands staged after any edit, even if it was live — never a silent auto-resumed broadcast.
 - **Manual broadcast-arm safety gate** — every destination leg that pushes to a real platform starts staged, not running, even if enabled in config. Nothing reaches a real platform until you arm broadcasting and hit "Go Live" on that leg. Disarming immediately stops every live push.
 - **Structured, size-bounded logging** — both the JSON-Lines event log and the always-on console mirror rotate past a size cap and prune old files, so a long-running install's `logs/` directory doesn't grow without bound.
 - **Standalone, click-and-run Windows release** — `npm run package:win` produces a folder with `oneencode.exe` plus every runtime dependency bundled alongside it (Node itself, the built dashboard, MediaMTX, and FFmpeg) — nothing to install on the target machine.
@@ -74,7 +75,8 @@ No `config/legs.local.yaml`? OneEncode auto-generates a safe default on first ru
 ```bash
 cp config/legs.example.yaml config/legs.local.yaml
 cp config/secrets.local.example.yaml config/secrets.local.yaml
-# edit both with your real renditions/legs/destination URLs — never commit these, then restart
+# edit both with your real renditions/legs/destination URLs — never commit these
+# changes apply automatically within a second (hot-reload) — no restart needed
 ```
 
 Then open the dashboard (`http://127.0.0.1:4771` by default) and use the local auth token generated on first run to log in.

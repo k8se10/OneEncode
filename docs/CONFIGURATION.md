@@ -29,10 +29,42 @@ environment variable), the orchestrator still refuses to start with a clear
 error — a real, if broken, config is never silently replaced or
 partial-started with some legs missing their credentials.
 
-There is currently **no hot-reload**. Every config change (through the
-dashboard or by hand-editing YAML) requires restarting the orchestrator to
-take effect. The dashboard shows a "restart required" notice after any
-config write for exactly this reason.
+**Config changes hot-reload automatically** — no restart needed, whether you
+edit through the dashboard or hand-edit the YAML directly.
+`src/config/watcher.ts` watches both files and applies a change within about
+a second of saving. It's conservative about what it touches:
+
+- Adding, removing, or editing a **leg** only affects that leg's own process
+  — the combined decode/rendition-encode process and every other leg keep
+  running untouched.
+- Changing **`ingest`**, **`relay`**, **`encoderPriority`**, or **any
+  rendition** restarts the combined process (every rendition branch rebuilds
+  together) — this is the same "relay" restart the dashboard's manual
+  Restart button already does, just triggered automatically. Destination
+  legs aren't force-restarted when this happens; they briefly lose their
+  input and reconnect on their own once the new process is up, same as a
+  manual restart today.
+- **An `rtmp-push` leg always lands staged after any edit to it** — added,
+  changed, or affected by a rotated secret — even if it was live and armed
+  beforehand. Hot-reload never auto-resumes a real platform push; you always
+  arm + go live again after touching that leg's config. This is deliberate:
+  a config change should never silently restart a real broadcast without you
+  noticing.
+- An **invalid edit** (bad YAML, a value that fails schema validation, an
+  unresolvable secret) is logged loudly and the pipeline keeps running
+  unchanged on its last-known-good config — a typo can never crash or
+  interrupt a live broadcast.
+- A rotated **secret** (a stream key changed in `secrets.local.yaml` with
+  the leg's own config otherwise unchanged) is detected too, not just leg
+  config-field changes — that leg's process rebuilds (staged, same as above)
+  using the new value.
+
+Dashboard writes are also **non-destructive**: they edit the specific
+rendition/leg you touched in place (via a comment-preserving YAML parser)
+rather than re-serializing the whole file, so any comments or formatting you
+added by hand elsewhere in `legs.local.yaml` survive a dashboard save. Every
+write is atomic (temp file + rename), so a crash mid-write can never leave
+the file truncated or corrupt.
 
 ## Renditions: what to encode
 

@@ -30,6 +30,7 @@
     "express": "^5.2.1",
     "js-yaml": "^4.1.0",
     "ws": "^8.21.3",
+    "yaml": "^2.9.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

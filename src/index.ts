@@ -1,6 +1,7 @@
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { loadConfig, ConfigError } from "./config/load.js";
+import { watchConfigForHotReload } from "./config/watcher.js";
 import { logEvent } from "./logging/logger.js";
 import { mirrorConsoleToFile } from "./logging/consoleMirror.js";
 import { startPipeline } from "./pipeline.js";
@@ -75,6 +76,8 @@ async function main(): Promise<void> {
   }
 
   const pipeline = await startPipeline(config, destinations);
+  const configWatcher = watchConfigForHotReload(pipeline);
+  console.log(`[oneencode] watching config/legs.local.yaml and config/secrets.local.yaml for changes (hot-reload, no restart needed)`);
   const ui = startUiServer(pipeline, { usingDefaultConfig });
   // Passing the token in the auto-launch URL is a deliberate, documented
   // relaxation of "never put the token in a URL" (CLAUDE.md's UI code
@@ -92,6 +95,7 @@ async function main(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`\n[oneencode] shutting down...`);
+    configWatcher.close();
     ui.close();
     await pipeline.stopAll();
     process.exit(0);

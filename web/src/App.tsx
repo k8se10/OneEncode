@@ -98,7 +98,7 @@ function App() {
   const [encode, setEncode] = useState<EncodeStatus>({ state: "unknown" });
   const [error, setError] = useState<string | null>(null);
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
-  const [restartNotice, setRestartNotice] = useState(false);
+  const [saveNotice, setSaveNotice] = useState(false);
   const [broadcastArmed, setBroadcastArmed] = useState(false);
   const [usingDefaultConfig, setUsingDefaultConfig] = useState(false);
 
@@ -114,6 +114,15 @@ function App() {
     url.searchParams.delete("token");
     window.history.replaceState({}, "", url.toString());
   }, []);
+
+  // Config hot-reloads on its own (src/config/watcher.ts) shortly after a
+  // save, so this is a brief confirmation, not a "you must act" warning —
+  // auto-dismiss rather than requiring a manual click.
+  useEffect(() => {
+    if (!saveNotice) return;
+    const timer = setTimeout(() => setSaveNotice(false), 4000);
+    return () => clearTimeout(timer);
+  }, [saveNotice]);
 
   useEffect(() => {
     if (!token) return;
@@ -239,10 +248,10 @@ function App() {
         </button>
       </div>
 
-      {restartNotice && (
+      {saveNotice && (
         <div className="notice-banner">
-          Config saved. Changes only take effect after the orchestrator is restarted — no hot-reload yet.{" "}
-          <button className="link-button" onClick={() => setRestartNotice(false)}>
+          Config saved — applying automatically, no restart needed.{" "}
+          <button className="link-button" onClick={() => setSaveNotice(false)}>
             Dismiss
           </button>
         </div>
@@ -251,7 +260,7 @@ function App() {
       {error && <div className="error-banner">{error}</div>}
 
       {tab === "configure" ? (
-        <ConfigManager token={token} onConfigChanged={() => setRestartNotice(true)} />
+        <ConfigManager token={token} onConfigChanged={() => setSaveNotice(true)} />
       ) : (
         <>
           <section className="rendition-card">

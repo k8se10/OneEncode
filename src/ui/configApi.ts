@@ -1,7 +1,8 @@
 import { Router } from "express";
 import fs from "node:fs";
 import path from "node:path";
-import yaml from "js-yaml";
+import jsYaml from "js-yaml";
+import { Document, parseDocument, type YAMLSeq } from "yaml";
 import type { z } from "zod";
 import { rootConfigSchema, legSchema, renditionSchema, encoderName, type RootConfig } from "../config/schema.js";
 
@@ -22,16 +23,32 @@ import { rootConfigSchema, legSchema, renditionSchema, encoderName, type RootCon
  * ever report whether a given env-var name currently has a value set
  * (`secretSet: true/false`), never the value itself.
  *
- * Hot-reload is NOT implemented — every successful write responds with
- * `restartRequired: true` and the caller (the dashboard UI) is responsible
- * for surfacing that to the user. Changes only take effect after the
- * orchestrator process is restarted.
+ * Non-destructive writes: mutations use the `yaml` package's
+ * comment-preserving `Document`/`YAMLSeq` API (add/set/delete on the
+ * actual rendition/leg sequence node) instead of re-serializing the whole
+ * parsed config from scratch — a hand-added comment anywhere in the file
+ * outside the specific item being touched survives a dashboard write. Every
+ * write is also atomic (temp file + rename in the same directory), so a
+ * crash mid-write can never leave legs.local.yaml/secrets.local.yaml
+ * truncated or corrupt.
+ *
+ * Hot-reload IS implemented (src/config/watcher.ts watches these files and
+ * calls RunningPipeline.reconcile()) — a successful write here takes effect
+ * on its own, no restart needed. `restartRequired` is no longer part of any
+ * response.
  */
 
 const CONFIG_DIR = path.resolve(process.cwd(), "config");
 const LEGS_LOCAL_PATH = path.join(CONFIG_DIR, "legs.local.yaml");
 const SECRETS_LOCAL_PATH = path.join(CONFIG_DIR, "secrets.local.yaml");
 const PLATFORM_PROFILES_PATH = path.join(CONFIG_DIR, "platformProfiles.yaml");
+
+/** Temp file in the same directory + rename over the target — the rename is atomic on both Windows and POSIX, so a crash mid-write can never leave a torn/corrupt config file. */
+function atomicWriteFileSync(filePath: string, content: string): void {
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmpPath, content, "utf8");
+  fs.renameSync(tmpPath, filePath);
+}
 
 /**
  * destinationUrlEnv (the env-var name a leg's real URL/key is resolved
@@ -57,71 +74,72 @@ function formatIssues(error: z.ZodError): string {
   return error.issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`).join("; ");
 }
 
-function readRawConfig(): RootConfig {
+function readDocument(): Document {
   if (!fs.existsSync(LEGS_LOCAL_PATH)) {
     throw new ConfigApiError(
       "config/legs.local.yaml does not exist yet — copy config/legs.example.yaml to config/legs.local.yaml first.",
       404,
     );
   }
-  const raw = fs.readFileSync(LEGS_LOCAL_PATH, "utf8");
-  const parsed = yaml.load(raw);
-  const result = rootConfigSchema.safeParse(parsed);
+  return parseDocument(fs.readFileSync(LEGS_LOCAL_PATH, "utf8"));
+}
+
+/** Validates a Document's current content against the same schema the orchestrator loads with. Throws ConfigApiError (400) on failure — never writes an invalid result. */
+function validateDocument(doc: Document): RootConfig {
+  const result = rootConfigSchema.safeParse(doc.toJSON());
+  if (!result.success) {
+    throw new ConfigApiError(formatIssues(result.error), 400);
+  }
+  return result.data;
+}
+
+function readRawConfig(): RootConfig {
+  const result = rootConfigSchema.safeParse(readDocument().toJSON());
   if (!result.success) {
     throw new ConfigApiError(`config/legs.local.yaml on disk is currently invalid: ${formatIssues(result.error)}`, 500);
   }
   return result.data;
 }
 
-function writeConfig(config: RootConfig): void {
-  const content =
-    "# Managed in part by the OneEncode dashboard (src/ui/configApi.ts) —\n" +
-    "# hand edits are preserved on the next dashboard write, but a hand edit\n" +
-    "# and a concurrent dashboard write can still race each other.\n" +
-    "# Changes here require an orchestrator restart to take effect.\n" +
-    yaml.dump(config, { noRefs: true, sortKeys: false });
-  fs.writeFileSync(LEGS_LOCAL_PATH, content, "utf8");
+/** Validates, then writes atomically (temp file + rename) — comments/formatting outside whatever the caller actually mutated on `doc` are untouched, since this serializes the SAME Document instance the caller edited in place, never a freshly-dumped plain object. */
+function writeDocument(doc: Document): RootConfig {
+  const validated = validateDocument(doc);
+  atomicWriteFileSync(LEGS_LOCAL_PATH, doc.toString());
+  return validated;
 }
 
-function readSecretMap(): Record<string, string> {
-  if (!fs.existsSync(SECRETS_LOCAL_PATH)) return {};
-  const parsed = yaml.load(fs.readFileSync(SECRETS_LOCAL_PATH, "utf8"));
-  if (typeof parsed !== "object" || parsed === null) return {};
-  return parsed as Record<string, string>;
+/** Finds a rendition's or leg's index within its YAMLSeq by id — mutations below operate on that index directly (seq.set/seq.delete) rather than re-serializing the whole array. */
+function findIndexById(seq: YAMLSeq, id: string): number {
+  return (seq.toJSON() as Array<{ id: string }>).findIndex((item) => item.id === id);
+}
+
+function readSecretDocument(): Document {
+  if (!fs.existsSync(SECRETS_LOCAL_PATH)) {
+    const doc = new Document({});
+    doc.commentBefore = " Real destination URLs/stream keys — gitignored, never commit real values.";
+    return doc;
+  }
+  return parseDocument(fs.readFileSync(SECRETS_LOCAL_PATH, "utf8"));
 }
 
 function writeSecret(envName: string, value: string): void {
-  const existing = readSecretMap();
-  existing[envName] = value;
-  const content =
-    "# Real destination URLs/stream keys — gitignored, never commit real values.\n" +
-    "# Managed in part by the OneEncode dashboard (src/ui/configApi.ts).\n" +
-    yaml.dump(existing, { noRefs: true, sortKeys: true });
-  fs.writeFileSync(SECRETS_LOCAL_PATH, content, "utf8");
+  const doc = readSecretDocument();
+  doc.set(envName, value);
+  atomicWriteFileSync(SECRETS_LOCAL_PATH, doc.toString());
 }
 
 function deleteSecret(envName: string): void {
   if (!fs.existsSync(SECRETS_LOCAL_PATH)) return;
-  const existing = readSecretMap();
-  if (!(envName in existing)) return;
-  delete existing[envName];
-  fs.writeFileSync(
-    SECRETS_LOCAL_PATH,
-    "# Real destination URLs/stream keys — gitignored, never commit real values.\n" + yaml.dump(existing, { noRefs: true, sortKeys: true }),
-    "utf8",
-  );
+  const doc = readSecretDocument();
+  if (!doc.has(envName)) return;
+  doc.delete(envName);
+  atomicWriteFileSync(SECRETS_LOCAL_PATH, doc.toString());
 }
 
-/** Applies a mutation to a validated copy of the config, validates the WHOLE result, writes only if valid. Throws ConfigApiError on any failure. */
-function applyAndWrite(mutate: (config: RootConfig) => RootConfig): RootConfig {
-  const current = readRawConfig();
-  const next = mutate(current);
-  const validated = rootConfigSchema.safeParse(next);
-  if (!validated.success) {
-    throw new ConfigApiError(formatIssues(validated.error), 400);
-  }
-  writeConfig(validated.data);
-  return validated.data;
+function readSecretMap(): Record<string, string> {
+  const parsed = readSecretDocument().toJSON();
+  if (typeof parsed !== "object" || parsed === null) return {};
+  return parsed as Record<string, string>;
 }
 
 export function createConfigApiRouter(): Router {
@@ -153,7 +171,7 @@ export function createConfigApiRouter(): Router {
         res.json({ platforms: [] });
         return;
       }
-      const parsed = yaml.load(fs.readFileSync(PLATFORM_PROFILES_PATH, "utf8")) as { platforms?: unknown[] };
+      const parsed = jsYaml.load(fs.readFileSync(PLATFORM_PROFILES_PATH, "utf8")) as { platforms?: unknown[] };
       res.json({ platforms: parsed.platforms ?? [] });
     } catch (err) {
       const status = err instanceof ConfigApiError ? err.status : 500;
@@ -170,8 +188,14 @@ export function createConfigApiRouter(): Router {
         res.status(400).json({ error: formatIssues(parsedRendition.error) });
         return;
       }
-      const config = applyAndWrite((cfg) => ({ ...cfg, renditions: [...cfg.renditions, parsedRendition.data] }));
-      res.json({ ok: true, restartRequired: true, rendition: config.renditions.find((r) => r.id === parsedRendition.data.id) });
+      const doc = readDocument();
+      const seq = doc.get("renditions", true) as YAMLSeq;
+      if (findIndexById(seq, parsedRendition.data.id) !== -1) {
+        throw new ConfigApiError(`Rendition "${parsedRendition.data.id}" already exists`, 409);
+      }
+      seq.add(parsedRendition.data);
+      writeDocument(doc);
+      res.json({ ok: true, rendition: parsedRendition.data });
     } catch (err) {
       const status = err instanceof ConfigApiError ? err.status : 500;
       res.status(status).json({ error: err instanceof Error ? err.message : String(err) });
@@ -185,14 +209,13 @@ export function createConfigApiRouter(): Router {
         res.status(400).json({ error: formatIssues(parsedRendition.error) });
         return;
       }
-      applyAndWrite((cfg) => {
-        const idx = cfg.renditions.findIndex((r) => r.id === req.params.id);
-        if (idx === -1) throw new ConfigApiError(`No rendition "${req.params.id}"`, 404);
-        const renditions = [...cfg.renditions];
-        renditions[idx] = parsedRendition.data;
-        return { ...cfg, renditions };
-      });
-      res.json({ ok: true, restartRequired: true });
+      const doc = readDocument();
+      const seq = doc.get("renditions", true) as YAMLSeq;
+      const idx = findIndexById(seq, req.params.id);
+      if (idx === -1) throw new ConfigApiError(`No rendition "${req.params.id}"`, 404);
+      seq.set(idx, parsedRendition.data);
+      writeDocument(doc);
+      res.json({ ok: true });
     } catch (err) {
       const status = err instanceof ConfigApiError ? err.status : 500;
       res.status(status).json({ error: err instanceof Error ? err.message : String(err) });
@@ -201,18 +224,22 @@ export function createConfigApiRouter(): Router {
 
   router.delete("/renditions/:id", (req, res) => {
     try {
-      applyAndWrite((cfg) => {
-        const dependentLegs = cfg.legs.filter((leg) => leg.renditionId === req.params.id);
-        if (dependentLegs.length > 0) {
-          throw new ConfigApiError(
-            `Cannot delete rendition "${req.params.id}": ${dependentLegs.length} leg(s) still reference it ` +
-              `(${dependentLegs.map((l) => l.id).join(", ")}). Delete or reassign those legs first.`,
-            400,
-          );
-        }
-        return { ...cfg, renditions: cfg.renditions.filter((r) => r.id !== req.params.id) };
-      });
-      res.json({ ok: true, restartRequired: true });
+      const doc = readDocument();
+      const config = validateDocument(doc);
+      const dependentLegs = config.legs.filter((leg) => leg.renditionId === req.params.id);
+      if (dependentLegs.length > 0) {
+        throw new ConfigApiError(
+          `Cannot delete rendition "${req.params.id}": ${dependentLegs.length} leg(s) still reference it ` +
+            `(${dependentLegs.map((l) => l.id).join(", ")}). Delete or reassign those legs first.`,
+          400,
+        );
+      }
+      const seq = doc.get("renditions", true) as YAMLSeq;
+      const idx = findIndexById(seq, req.params.id);
+      if (idx === -1) throw new ConfigApiError(`No rendition "${req.params.id}"`, 404);
+      seq.delete(idx);
+      writeDocument(doc);
+      res.json({ ok: true });
     } catch (err) {
       const status = err instanceof ConfigApiError ? err.status : 500;
       res.status(status).json({ error: err instanceof Error ? err.message : String(err) });
@@ -232,11 +259,17 @@ export function createConfigApiRouter(): Router {
         res.status(400).json({ error: formatIssues(parsedLeg.error) });
         return;
       }
-      applyAndWrite((cfg) => ({ ...cfg, legs: [...cfg.legs, parsedLeg.data] }));
+      const doc = readDocument();
+      const seq = doc.get("legs", true) as YAMLSeq;
+      if (findIndexById(seq, parsedLeg.data.id) !== -1) {
+        throw new ConfigApiError(`Leg "${parsedLeg.data.id}" already exists`, 409);
+      }
+      seq.add(parsedLeg.data);
+      writeDocument(doc);
       if (parsedLeg.data.type === "rtmp-push" && typeof secretValue === "string" && secretValue.trim()) {
         writeSecret(parsedLeg.data.destinationUrlEnv, secretValue.trim());
       }
-      res.json({ ok: true, restartRequired: true });
+      res.json({ ok: true });
     } catch (err) {
       const status = err instanceof ConfigApiError ? err.status : 500;
       res.status(status).json({ error: err instanceof Error ? err.message : String(err) });
@@ -259,17 +292,16 @@ export function createConfigApiRouter(): Router {
         res.status(400).json({ error: formatIssues(parsedLeg.error) });
         return;
       }
-      applyAndWrite((cfg) => {
-        const idx = cfg.legs.findIndex((l) => l.id === req.params.id);
-        if (idx === -1) throw new ConfigApiError(`No leg "${req.params.id}"`, 404);
-        const legs = [...cfg.legs];
-        legs[idx] = parsedLeg.data;
-        return { ...cfg, legs };
-      });
+      const doc = readDocument();
+      const seq = doc.get("legs", true) as YAMLSeq;
+      const idx = findIndexById(seq, req.params.id);
+      if (idx === -1) throw new ConfigApiError(`No leg "${req.params.id}"`, 404);
+      seq.set(idx, parsedLeg.data);
+      writeDocument(doc);
       if (parsedLeg.data.type === "rtmp-push" && typeof secretValue === "string" && secretValue.trim()) {
         writeSecret(parsedLeg.data.destinationUrlEnv, secretValue.trim());
       }
-      res.json({ ok: true, restartRequired: true });
+      res.json({ ok: true });
     } catch (err) {
       const status = err instanceof ConfigApiError ? err.status : 500;
       res.status(status).json({ error: err instanceof Error ? err.message : String(err) });
@@ -278,14 +310,16 @@ export function createConfigApiRouter(): Router {
 
   router.delete("/legs/:id", (req, res) => {
     try {
-      let deletedLeg: RootConfig["legs"][number] | undefined;
-      applyAndWrite((cfg) => {
-        deletedLeg = cfg.legs.find((l) => l.id === req.params.id);
-        if (!deletedLeg) throw new ConfigApiError(`No leg "${req.params.id}"`, 404);
-        return { ...cfg, legs: cfg.legs.filter((l) => l.id !== req.params.id) };
-      });
-      if (deletedLeg?.type === "rtmp-push") deleteSecret(deletedLeg.destinationUrlEnv);
-      res.json({ ok: true, restartRequired: true });
+      const doc = readDocument();
+      const config = validateDocument(doc);
+      const deletedLeg = config.legs.find((l) => l.id === req.params.id);
+      if (!deletedLeg) throw new ConfigApiError(`No leg "${req.params.id}"`, 404);
+      const seq = doc.get("legs", true) as YAMLSeq;
+      const idx = findIndexById(seq, req.params.id);
+      seq.delete(idx);
+      writeDocument(doc);
+      if (deletedLeg.type === "rtmp-push") deleteSecret(deletedLeg.destinationUrlEnv);
+      res.json({ ok: true });
     } catch (err) {
       const status = err instanceof ConfigApiError ? err.status : 500;
       res.status(status).json({ error: err instanceof Error ? err.message : String(err) });

@@ -1,5 +1,6 @@
 import type { RootConfig } from "./config/schema.js";
 import type { ResolvedDestinations } from "./config/load.js";
+import { planReconciliation } from "./config/reconcile.js";
 import { startRelayServer, stopRelayServer, type RelayServerHandle } from "./ingest/relayServer.js";
 import { startCombinedRelay, buildCombinedEncodeArgv, type CombinedEncodeController } from "./ingest/decodeRelay.js";
 import { buildCopyArgv, type RenditionEncodeTarget } from "./legs/argvBuilder.js";
@@ -10,6 +11,7 @@ import { resolveOutputPath } from "./destinations/localFileDestination.js";
 import { resolveRtmpDestination } from "./destinations/rtmpDestination.js";
 import { loadProbedCeiling, NvencSessionTracker, selectEncoder } from "./nvenc/sessionTracker.js";
 import { probeDecodeHwaccel } from "./nvenc/decodeHwaccelProbe.js";
+import type { LegConfig } from "./config/schema.js";
 
 /** A managed leg's recreate-on-demand descriptor, so a manual restart doesn't need the whole pipeline rebuilt. */
 interface Managed {
@@ -78,6 +80,87 @@ export interface RunningPipeline {
   arm(): void;
   /** Turns the broadcast arm switch off AND immediately stops every currently-running rtmp-push leg (a kill switch, not just a future-start block). Returns the ids actually stopped. */
   disarm(): Promise<string[]>;
+  /**
+   * Hot-reload: applies a freshly-validated config (and its freshly-
+   * resolved secrets) to the already-running pipeline, restarting only what
+   * actually needs it (see config/reconcile.ts's planReconciliation for the
+   * config-diff rules; an rtmp-push leg whose *resolved secret value*
+   * changed — e.g. a rotated stream key in secrets.local.yaml, with the
+   * leg's own config fields otherwise unchanged — is also treated as
+   * needing a rebuild, since planReconciliation alone can't see secret
+   * values). Never auto-starts an rtmp-push leg — a newly-added or edited
+   * rtmp-push leg always lands staged, same as at initial startup,
+   * requiring an explicit arm+go-live regardless of whether broadcast is
+   * currently armed. Returns a summary for logging.
+   */
+  reconcile(newConfig: RootConfig, newDestinations: ResolvedDestinations): Promise<ReconcileSummary>;
+}
+
+export interface ReconcileSummary {
+  restartedCombinedProcess: boolean;
+  restartCombinedReason?: string;
+  legsAdded: string[];
+  legsRemoved: string[];
+  legsRestarted: string[];
+  noChanges: boolean;
+}
+
+/**
+ * Groups config.legs by rendition and resolves each unique rendition's
+ * actual encoder via a FRESH NvencSessionTracker (starting at 0 — correct
+ * both at initial startup and after a combined-process rebuild, since the
+ * old process's own NVENC sessions are always stopped first/around the
+ * same time, freeing them). Shared by startPipeline (initial build) and
+ * reconcile() (hot-reload combined-process rebuild) so both paths make the
+ * exact same encoder-selection decision from the same config.
+ */
+function computeRenditionTargets(config: RootConfig): RenditionEncodeTarget[] {
+  const { ceiling: nvencCeiling } = loadProbedCeiling();
+  const nvencTracker = new NvencSessionTracker(nvencCeiling);
+  const legsByRendition = groupLegsByRendition(config.legs);
+  const renditionTargets: RenditionEncodeTarget[] = [];
+  for (const [renditionId, legsForRendition] of legsByRendition) {
+    const rendition = config.renditions.find((r) => r.id === renditionId);
+    if (!rendition) {
+      // Unreachable — schema validation already rejects a leg referencing an unknown renditionId.
+      throw new Error(`Internal error: no rendition found for id "${renditionId}"`);
+    }
+    const encoder = selectEncoder(`rendition-${renditionId}`, rendition.encoderPreference, nvencTracker);
+    console.log(
+      `[oneencode] rendition "${renditionId}": ${legsForRendition.length} leg(s) sharing this encode ` +
+        `(${legsForRendition.map((l) => l.id).join(", ")}), encoder ${encoder}`,
+    );
+    renditionTargets.push({ rendition, encoder, outputUrl: buildRenditionUrl(config.relay.url, renditionId) });
+  }
+  return renditionTargets;
+}
+
+/**
+ * Builds a single leg's Managed descriptor (argv closure + supervisor).
+ * rtmp-push legs always start staged — never auto-started, whether at
+ * initial startup or added/changed later via reconcile() — see
+ * RunningPipeline.reconcile's own doc comment for why this holds
+ * regardless of the current broadcast-arm state. local-file legs have no
+ * external side effect and always auto-start.
+ */
+function createLegManaged(
+  leg: LegConfig,
+  renditionUrl: string,
+  destinations: ResolvedDestinations,
+  restartPolicy: RootConfig["restartPolicy"],
+): Managed {
+  const buildArgv = () => {
+    const output =
+      leg.type === "local-file"
+        ? ({ kind: "local-file", path: resolveOutputPath(leg) } as const)
+        : ({ kind: "rtmp", url: resolveRtmpDestination(leg, destinations) } as const);
+    return buildCopyArgv(renditionUrl, output);
+  };
+  const supervisor =
+    leg.type === "rtmp-push"
+      ? stagedSupervisor(leg.id)
+      : superviseLeg({ legId: leg.id, encoderLabel: "copy", buildArgv, restartPolicy });
+  return { id: leg.id, type: leg.type, encoderLabel: "copy", buildArgv, supervisor };
 }
 
 /**
@@ -101,38 +184,20 @@ export async function startPipeline(config: RootConfig, destinations: ResolvedDe
   const decodeHwaccel = await resolveDecodeHwaccel(config.relay.decodeHwaccel);
   config = { ...config, relay: { ...config.relay, decodeHwaccel } };
 
-  const { ceiling: nvencCeiling } = loadProbedCeiling();
   // No reservation for config.relay.encoder here: the relay's own separate
   // mezzanine encode branch was removed 2026-08-13 (buildCombinedRelayAndRenditionsArgv's
   // own comment has the full story) — nothing consumes it anymore, so it no
   // longer runs and shouldn't claim an NVENC session slot for a branch that
   // doesn't exist.
-  const nvencTracker = new NvencSessionTracker(nvencCeiling);
-
-  const legsByRendition = groupLegsByRendition(config.legs);
-  const renditionTargets: RenditionEncodeTarget[] = [];
-  for (const [renditionId, legsForRendition] of legsByRendition) {
-    const rendition = config.renditions.find((r) => r.id === renditionId);
-    if (!rendition) {
-      // Unreachable — the config loader's schema validation already rejects
-      // a leg referencing an unknown renditionId before this ever runs.
-      throw new Error(`Internal error: no rendition found for id "${renditionId}"`);
-    }
-    const encoder = selectEncoder(`rendition-${renditionId}`, rendition.encoderPreference, nvencTracker);
-    console.log(
-      `[oneencode] rendition "${renditionId}": ${legsForRendition.length} leg(s) sharing this encode ` +
-        `(${legsForRendition.map((l) => l.id).join(", ")}), encoder ${encoder}`,
-    );
-    renditionTargets.push({ rendition, encoder, outputUrl: buildRenditionUrl(config.relay.url, renditionId) });
-  }
+  let renditionTargets = computeRenditionTargets(config);
 
   console.log(`[oneencode] starting combined decode/relay/rendition-encode process (pulling ${config.ingest.listenUrl})...`);
-  const combinedEncode = startCombinedRelay(config, renditionTargets);
+  let combinedEncode = startCombinedRelay(config, renditionTargets);
   await combinedEncode.ready;
   console.log(`[oneencode] combined encode is producing frames — starting destination legs`);
 
   const broadcastArm = createBroadcastArmState();
-  const legIds: string[] = [];
+  let legIds: string[] = [];
   const managedById = new Map<string, Managed>();
   managedById.set("relay", {
     id: "relay",
@@ -142,30 +207,19 @@ export async function startPipeline(config: RootConfig, destinations: ResolvedDe
     supervisor: combinedEncode,
   });
 
+  const legsByRendition = groupLegsByRendition(config.legs);
   let stagedBroadcastLegCount = 0;
   for (const [renditionId, legsForRendition] of legsByRendition) {
     const renditionUrl = buildRenditionUrl(config.relay.url, renditionId);
     for (const leg of legsForRendition) {
-      const buildArgv = () => {
-        const output =
-          leg.type === "local-file"
-            ? ({ kind: "local-file", path: resolveOutputPath(leg) } as const)
-            : ({ kind: "rtmp", url: resolveRtmpDestination(leg, destinations) } as const);
-        return buildCopyArgv(renditionUrl, output);
-      };
       // rtmp-push legs are a real broadcast to a real external platform —
       // they do NOT auto-start here even if enabled:true. They stay staged
       // until a manual "go live" (restartManaged) action, which itself
       // requires the broadcast arm switch to be on. local-file legs have no
-      // external side effect, so they auto-start as before.
-      let legSupervisor: LegSupervisor;
-      if (leg.type === "rtmp-push") {
-        stagedBroadcastLegCount++;
-        legSupervisor = stagedSupervisor(leg.id);
-      } else {
-        legSupervisor = superviseLeg({ legId: leg.id, encoderLabel: "copy", buildArgv, restartPolicy: config.restartPolicy });
-      }
-      managedById.set(leg.id, { id: leg.id, type: leg.type, encoderLabel: "copy", buildArgv, supervisor: legSupervisor });
+      // external side effect, so they auto-start as before. See
+      // createLegManaged.
+      if (leg.type === "rtmp-push") stagedBroadcastLegCount++;
+      managedById.set(leg.id, createLegManaged(leg, renditionUrl, destinations, config.restartPolicy));
       legIds.push(leg.id);
     }
   }
@@ -184,12 +238,23 @@ export async function startPipeline(config: RootConfig, destinations: ResolvedDe
 
   return {
     relay,
-    combinedEncode,
-    legIds,
+    // Getters, not plain properties: reconcile() below can rebuild the
+    // combined process (a new CombinedEncodeController instance), add/
+    // remove legs (mutating legIds), and swap the running config — every
+    // caller (dashboard, benchmark scripts) must always see the current
+    // state, not a snapshot frozen at startPipeline's own return time.
+    get combinedEncode() {
+      return combinedEncode;
+    },
+    get legIds() {
+      return legIds;
+    },
     get legSupervisorsById() {
       return asMap(legIds);
     },
-    config,
+    get config() {
+      return config;
+    },
     stopManaged: async (id: string) => {
       const managed = managedById.get(id);
       if (!managed) throw new Error(`No managed leg/process with id "${id}"`);
@@ -229,6 +294,105 @@ export async function startPipeline(config: RootConfig, destinations: ResolvedDe
         }
       }
       return stopped;
+    },
+    reconcile: async (rawNewConfig: RootConfig, newDestinations: ResolvedDestinations): Promise<ReconcileSummary> => {
+      // `config` (the running baseline) always has relay.decodeHwaccel
+      // resolved to a definite boolean (see startPipeline above) — a freshly
+      // loadConfig()'d file still has the raw "auto" from disk if the user
+      // never set it explicitly. Comparing those directly would make EVERY
+      // reload look like a relay-settings change (spurious combined-process
+      // restart on every single edit, found via live testing). Resolve the
+      // same way startPipeline does before the diff ever sees it — but only
+      // actually re-run the ~250ms probe when something that could change
+      // its answer is different (an explicit true/false, or some other
+      // relay field changed and a rebuild is happening anyway); otherwise
+      // reuse the already-resolved value from the running config, since GPU
+      // capability doesn't change between one reload and the next.
+      const { decodeHwaccel: rawDecodeHwaccel, ...rawRelayRest } = rawNewConfig.relay;
+      const { decodeHwaccel: _currentDecodeHwaccel, ...currentRelayRest } = config.relay;
+      const otherRelayFieldsChanged = JSON.stringify(rawRelayRest) !== JSON.stringify(currentRelayRest);
+      const decodeHwaccel =
+        rawDecodeHwaccel !== "auto"
+          ? rawDecodeHwaccel
+          : otherRelayFieldsChanged
+            ? await resolveDecodeHwaccel("auto")
+            : config.relay.decodeHwaccel;
+      const newConfig: RootConfig = { ...rawNewConfig, relay: { ...rawNewConfig.relay, decodeHwaccel } };
+
+      const plan = planReconciliation(config, newConfig);
+
+      // planReconciliation only ever sees LegConfig objects, which never
+      // contain a secret value (just the destinationUrlEnv NAME) -- so a
+      // rotated stream key with the leg's own config fields unchanged is
+      // invisible to it. Detect that here by comparing resolved URLs
+      // directly (never logged -- only the leg id), for legs present in
+      // both old and new (an add/remove already covers those) and not
+      // already flagged by the config diff.
+      const alreadyRestarting = new Set(plan.legsToRestart.map((l) => l.id));
+      const addedOrRemoved = new Set([...plan.legsToAdd.map((l) => l.id), ...plan.legsToRemove]);
+      const secretChangedLegs = newConfig.legs.filter((leg) => {
+        if (leg.type !== "rtmp-push" || addedOrRemoved.has(leg.id) || alreadyRestarting.has(leg.id)) return false;
+        return destinations.rtmpUrlByLegId.get(leg.id) !== newDestinations.rtmpUrlByLegId.get(leg.id);
+      });
+      const legsToRestart = [...plan.legsToRestart, ...secretChangedLegs];
+      const noChanges = plan.noChanges && secretChangedLegs.length === 0;
+
+      if (noChanges) {
+        console.log(`[oneencode] config reload: no actionable changes`);
+        return { restartedCombinedProcess: false, legsAdded: [], legsRemoved: [], legsRestarted: [], noChanges: true };
+      }
+
+      if (plan.restartCombinedProcess) {
+        console.log(`[oneencode] config reload: restarting combined encode process (${plan.restartCombinedReason})`);
+        await managedById.get("relay")!.supervisor.stop();
+        renditionTargets = computeRenditionTargets(newConfig);
+        combinedEncode = startCombinedRelay(newConfig, renditionTargets);
+        await combinedEncode.ready;
+        managedById.set("relay", {
+          id: "relay",
+          type: "relay",
+          encoderLabel: newConfig.relay.encoder,
+          buildArgv: () => buildCombinedEncodeArgv(newConfig, renditionTargets),
+          supervisor: combinedEncode,
+        });
+      }
+
+      for (const id of plan.legsToRemove) {
+        console.log(`[oneencode] config reload: removing leg "${id}"`);
+        await managedById.get(id)!.supervisor.stop();
+        managedById.delete(id);
+        legIds = legIds.filter((existing) => existing !== id);
+      }
+
+      for (const leg of plan.legsToAdd) {
+        console.log(`[oneencode] config reload: adding leg "${leg.id}"${leg.type === "rtmp-push" ? " (staged — arm + go live to start pushing)" : ""}`);
+        const renditionUrl = buildRenditionUrl(newConfig.relay.url, leg.renditionId);
+        managedById.set(leg.id, createLegManaged(leg, renditionUrl, newDestinations, newConfig.restartPolicy));
+        legIds.push(leg.id);
+      }
+
+      for (const leg of legsToRestart) {
+        // A changed rtmp-push leg always lands staged again, even if it was
+        // live before the edit — never auto-restart a real broadcast just
+        // because its config (or its resolved secret) changed underneath
+        // it. A changed local-file leg restarts immediately; it has no
+        // external side effect.
+        console.log(`[oneencode] config reload: rebuilding leg "${leg.id}"${leg.type === "rtmp-push" ? " (staged — arm + go live to resume pushing)" : ""}`);
+        await managedById.get(leg.id)!.supervisor.stop();
+        const renditionUrl = buildRenditionUrl(newConfig.relay.url, leg.renditionId);
+        managedById.set(leg.id, createLegManaged(leg, renditionUrl, newDestinations, newConfig.restartPolicy));
+      }
+
+      config = newConfig;
+      destinations = newDestinations;
+      return {
+        restartedCombinedProcess: plan.restartCombinedProcess,
+        restartCombinedReason: plan.restartCombinedReason,
+        legsAdded: plan.legsToAdd.map((l) => l.id),
+        legsRemoved: plan.legsToRemove,
+        legsRestarted: legsToRestart.map((l) => l.id),
+        noChanges: false,
+      };
     },
   };
 }

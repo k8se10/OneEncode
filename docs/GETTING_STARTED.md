@@ -160,11 +160,11 @@ You can add the leg either through the dashboard or by hand-editing YAML:
 ONEENCODE_TWITCH_MAIN_URL: "rtmp://live.twitch.tv/app/YOUR_STREAM_KEY"
 ```
 
-Either way, **you'll need to restart the orchestrator** (`Ctrl+C`, then `npm run dev` again) for a config change to take effect — there's no hot-reload yet.
+Either way, **the change applies automatically within about a second** — config hot-reloads, no restart needed. Adding a leg on an already-running rendition doesn't touch anything else already streaming. See `docs/CONFIGURATION.md` for exactly what a given kind of edit does and doesn't restart.
 
 ### The broadcast-arm safety gate
 
-This is important: **`rtmp-push` legs never start automatically, even if `enabled: true`.** On every orchestrator startup they sit in a `staged` state until you take two deliberate actions in the dashboard:
+This is important: **`rtmp-push` legs never start automatically, even if `enabled: true`.** On every orchestrator startup — and after any hot-reloaded edit to that leg, even if it was already live — they sit in a `staged` state until you take two deliberate actions in the dashboard:
 
 1. Click **"Arm for broadcast"** (the banner at the top of the dashboard) — a global switch, off by default on every restart.
 2. Click **"Go Live"** on the specific leg you want to actually push.
