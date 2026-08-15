@@ -1,5 +1,14 @@
 # PATCHNOTES
 
+## v0.2.0
+
+Summary of what's new since v0.1.0 — full detail in the entries below, oldest at the bottom of this block.
+
+- **CBR bitrate fix**: `-bufsize` tightened from 2x to 1x the target bitrate on the NVENC and libx264 rate-control paths — a real Twitch Inspector capture showed the old 2x buffer letting delivered bitrate swing bursty enough to look like VBR.
+- **Auto-detected GPU decode**: `relay.decodeHwaccel` (default `"auto"`) empirically probes whether this machine can do NVDEC decode + `scale_cuda` GPU-side scaling at every startup and turns it on automatically wherever it works — fixes a real idle-decode-engine-while-encode-ran-near-90% finding, no manual config needed.
+- **Hot-reload + non-destructive config writes**: editing `config/legs.local.yaml` (dashboard or by hand) now applies automatically within about a second, restarting only what actually needs it — never the whole app. Dashboard writes now preserve hand-added comments and are atomic. An `rtmp-push` leg always lands staged after any edit, even if it was live — no silent auto-resumed broadcast.
+- **Graceful startup + a "waiting for OBS" indicator**: the dashboard is now reachable the instant OneEncode starts, not only after a source connects — with a pulsating "Waiting for OBS connection…" badge that flashes "Connected" once real frames flow. General dashboard polish (transitions, fade-ins, tactile buttons) landed in the same pass.
+
 ## Added — graceful startup, a "waiting for OBS" indicator, and general dashboard polish
 
 Direct user request: starting OneEncode then quickly switching to OBS was awkward — OBS won't let you start streaming until it can actually connect, and there was no way to tell from OneEncode's side whether it was ready, since the dashboard itself didn't exist yet during that wait.
