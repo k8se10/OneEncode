@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   armBroadcast,
   AuthError,
@@ -101,6 +101,31 @@ function App() {
   const [saveNotice, setSaveNotice] = useState(false);
   const [broadcastArmed, setBroadcastArmed] = useState(false);
   const [usingDefaultConfig, setUsingDefaultConfig] = useState(false);
+  const [showConnectedFlash, setShowConnectedFlash] = useState(false);
+  const wasWaitingRef = useRef(false);
+
+  // The combined encode process is "waiting for connection" whenever it's
+  // starting/restarting and has never yet produced a real stats sample for
+  // any rendition or leg — the exact race the dashboard used to be
+  // completely unreachable during (startPipeline no longer blocks on this,
+  // see src/pipeline.ts). Once real stats show up, flash a brief
+  // "Connected" confirmation instead of just silently disappearing.
+  const waitingForConnection = useMemo(() => {
+    const everSeen = renditions.some((r) => r.stats !== null) || legs.some((l) => l.stats !== null);
+    return !everSeen && (encode.state === "starting" || encode.state === "restarting");
+  }, [encode.state, renditions, legs]);
+
+  useEffect(() => {
+    if (waitingForConnection) {
+      wasWaitingRef.current = true;
+      return;
+    }
+    if (!wasWaitingRef.current) return;
+    wasWaitingRef.current = false;
+    setShowConnectedFlash(true);
+    const timer = setTimeout(() => setShowConnectedFlash(false), 3000);
+    return () => clearTimeout(timer);
+  }, [waitingForConnection]);
 
   // Persist a URL-provided token (see getUrlToken) so future manual reloads
   // don't need it again, then strip it from the address bar immediately —
@@ -215,6 +240,19 @@ function App() {
 
   return (
     <div className="app">
+      {waitingForConnection && (
+        <div className="waiting-indicator">
+          <span className="pulse-dot" />
+          Waiting for OBS connection…
+        </div>
+      )}
+      {showConnectedFlash && (
+        <div className="connected-flash">
+          <span>✓</span>
+          Connected
+        </div>
+      )}
+
       <header>
         <h1>OneEncode Dashboard</h1>
         <div className="tabs">

@@ -1,5 +1,24 @@
 # PATCHNOTES
 
+## Added — graceful startup, a "waiting for OBS" indicator, and general dashboard polish
+
+Direct user request: starting OneEncode then quickly switching to OBS was awkward — OBS won't let you start streaming until it can actually connect, and there was no way to tell from OneEncode's side whether it was ready, since the dashboard itself didn't exist yet during that wait.
+
+### Root cause and the real fix
+`startPipeline()` used to block on `combinedEncode.ready` — the combined decode/rendition process's own first real stats sample — before returning, which meant `startUiServer()` never ran until a source connected. Removing that block outright was the first attempt, but it introduced a **real regression, found via live testing**: with the block gone, every destination leg started immediately too, all in parallel with the combined process's own connection retries — N+1 processes all hammering MediaMTX with connection attempts at once. This made even the combined process's read of a genuinely live, actively-pushing source fail repeatedly until its restart cap was exhausted (`leg_failed_permanent`), confirmed by manually running the exact same combined-process command in isolation, which connected instantly with no contention.
+
+**The actual fix**: `startPipeline()` now returns immediately (dashboard reachable right away), but destination legs still wait for `combinedEncode.ready` internally before starting — restoring the original one-source-of-truth-at-a-time connection behavior for legs, while decoupling *only* the dashboard's own availability from that wait. Legs populate into the same live state the dashboard already reads from, so they simply appear once the source connects, rather than existing pre-emptively.
+
+### Waiting-for-connection indicator
+- A pulsating "Waiting for OBS connection…" badge, top-right, visible whenever the combined process is starting/restarting and has never yet produced a real stats sample.
+- Transitions to a brief "✓ Connected" flash (auto-fades after ~3s) the moment real stats arrive.
+- Computed client-side from existing status data (no new backend state needed) — `encode.state` plus whether any rendition/leg has ever reported stats.
+
+### General UI polish
+- Rendition cards fade in on load.
+- Every button gets a subtle press/tactile transition; tabs and the arm banner transition color smoothly instead of snapping.
+- Badges transition color smoothly on state changes.
+
 ## Added — hot-reload and non-destructive config writes
 
 Direct user request: "make sure the app non destructively updates configs and also hot reload is essential now." Previously every config change — dashboard or hand-edit — needed a full manual restart, and dashboard writes re-serialized the whole config from scratch, silently wiping any hand-added YAML comments.

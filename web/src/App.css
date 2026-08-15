@@ -16,6 +16,20 @@
   box-sizing: border-box;
 }
 
+/* General tactile polish, applied once so every button (tabs, controls,
+   banners) picks it up without touching each one's own color/layout rules. */
+button {
+  transition: background-color 0.15s ease, opacity 0.15s ease, transform 0.1s ease, border-color 0.15s ease;
+}
+
+button:not(:disabled):active {
+  transform: scale(0.96);
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -100,6 +114,18 @@ code {
   border-radius: 8px;
   padding: 16px;
   margin-bottom: 16px;
+  animation: card-in 0.3s ease-out both;
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .rendition-header {
@@ -140,6 +166,7 @@ code {
   border-radius: 10px;
   font-size: 0.8em;
   text-transform: uppercase;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
 .badge-running {
@@ -167,6 +194,94 @@ code {
   color: var(--warn);
 }
 
+/* Ambient connection-waiting indicator (top-right, fixed) — visible
+   whenever the combined encode process hasn't seen its first real frame
+   yet, so it's obvious at a glance whether it's safe to start OBS without
+   needing to watch the console. */
+.waiting-indicator {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: rgba(224, 160, 48, 0.12);
+  border: 1px solid rgba(224, 160, 48, 0.35);
+  color: var(--warn);
+  font-size: 0.85em;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  animation: waiting-indicator-in 0.25s ease-out;
+}
+
+.waiting-indicator .pulse-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--warn);
+  animation: pulse-dot 1.6s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.connected-flash {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: rgba(63, 185, 80, 0.14);
+  border: 1px solid rgba(63, 185, 80, 0.4);
+  color: var(--running);
+  font-size: 0.85em;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  animation:
+    waiting-indicator-in 0.25s ease-out,
+    connected-flash-out 0.5s ease-in 2.5s forwards;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(224, 160, 48, 0.5);
+  }
+  50% {
+    transform: scale(0.8);
+    opacity: 0.65;
+    box-shadow: 0 0 0 6px rgba(224, 160, 48, 0);
+  }
+}
+
+@keyframes waiting-indicator-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes connected-flash-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.96);
+  }
+}
+
 /* Tabs */
 .tabs {
   display: flex;
@@ -182,6 +297,7 @@ code {
   padding: 6px 14px;
   cursor: pointer;
   font-size: 0.9em;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 .tab.active {
@@ -200,6 +316,7 @@ code {
   padding: 10px 14px;
   margin-bottom: 16px;
   font-weight: 600;
+  transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease;
 }
 
 .arm-banner.disarmed {

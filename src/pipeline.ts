@@ -193,8 +193,6 @@ export async function startPipeline(config: RootConfig, destinations: ResolvedDe
 
   console.log(`[oneencode] starting combined decode/relay/rendition-encode process (pulling ${config.ingest.listenUrl})...`);
   let combinedEncode = startCombinedRelay(config, renditionTargets);
-  await combinedEncode.ready;
-  console.log(`[oneencode] combined encode is producing frames — starting destination legs`);
 
   const broadcastArm = createBroadcastArmState();
   let legIds: string[] = [];
@@ -207,30 +205,51 @@ export async function startPipeline(config: RootConfig, destinations: ResolvedDe
     supervisor: combinedEncode,
   });
 
-  const legsByRendition = groupLegsByRendition(config.legs);
-  let stagedBroadcastLegCount = 0;
-  for (const [renditionId, legsForRendition] of legsByRendition) {
-    const renditionUrl = buildRenditionUrl(config.relay.url, renditionId);
-    for (const leg of legsForRendition) {
-      // rtmp-push legs are a real broadcast to a real external platform —
-      // they do NOT auto-start here even if enabled:true. They stay staged
-      // until a manual "go live" (restartManaged) action, which itself
-      // requires the broadcast arm switch to be on. local-file legs have no
-      // external side effect, so they auto-start as before. See
-      // createLegManaged.
-      if (leg.type === "rtmp-push") stagedBroadcastLegCount++;
-      managedById.set(leg.id, createLegManaged(leg, renditionUrl, destinations, config.restartPolicy));
-      legIds.push(leg.id);
-    }
-  }
+  // Legs deliberately do NOT start immediately (real regression found and
+  // fixed 2026-08-15, live-tested: starting every leg in parallel with the
+  // combined process's own connection attempt meant N+1 processes all
+  // hammering MediaMTX with retries at once, which made even the combined
+  // process's own read of a real, live source fail repeatedly until the
+  // restart cap was exhausted -- confirmed by manually running the exact
+  // same combined-process argv in isolation, which connected instantly).
+  // startPipeline() itself still returns immediately below though (that
+  // part of the original "more graceful startup" request stands) --
+  // legIds/managedById start with just "relay", so the dashboard is
+  // reachable and shows the waiting-for-connection state right away; legs
+  // are populated into the SAME live managedById/legIds (read via getters
+  // on the returned object) once combinedEncode.ready actually resolves,
+  // in the background, without blocking this function's return.
+  void (async () => {
+    await combinedEncode.ready;
+    console.log(`[oneencode] combined encode is producing frames — starting destination legs`);
 
-  if (stagedBroadcastLegCount > 0) {
-    console.log(
-      `[oneencode] ${stagedBroadcastLegCount} rtmp-push leg(s) staged but NOT started — broadcast is disarmed. ` +
-        `Arm via the dashboard/API, then restart/go-live each leg to actually start pushing.`,
-    );
-  }
-  console.log(`[oneencode] ${renditionTargets.length} rendition(s) inside the combined encode, ${legIds.length} leg(s) starting.`);
+    const legsByRendition = groupLegsByRendition(config.legs);
+    let stagedBroadcastLegCount = 0;
+    for (const [renditionId, legsForRendition] of legsByRendition) {
+      const renditionUrl = buildRenditionUrl(config.relay.url, renditionId);
+      for (const leg of legsForRendition) {
+        // rtmp-push legs are a real broadcast to a real external platform —
+        // they do NOT auto-start here even if enabled:true. They stay staged
+        // until a manual "go live" (restartManaged) action, which itself
+        // requires the broadcast arm switch to be on. local-file legs have no
+        // external side effect, so they auto-start as before. See
+        // createLegManaged.
+        if (leg.type === "rtmp-push") stagedBroadcastLegCount++;
+        managedById.set(leg.id, createLegManaged(leg, renditionUrl, destinations, config.restartPolicy));
+        legIds.push(leg.id);
+      }
+    }
+
+    if (stagedBroadcastLegCount > 0) {
+      console.log(
+        `[oneencode] ${stagedBroadcastLegCount} rtmp-push leg(s) staged but NOT started — broadcast is disarmed. ` +
+          `Arm via the dashboard/API, then restart/go-live each leg to actually start pushing.`,
+      );
+    }
+    console.log(`[oneencode] ${renditionTargets.length} rendition(s) inside the combined encode, ${legIds.length} leg(s) starting.`);
+  })();
+
+  console.log(`[oneencode] combined encode starting — dashboard is available now, will show "waiting for connection" until the source connects`);
 
   function asMap(ids: string[]): Map<string, LegSupervisor> {
     return new Map(ids.map((id) => [id, managedById.get(id)!.supervisor]));
