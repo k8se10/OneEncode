@@ -98,6 +98,19 @@ For a full walkthrough (including the standalone-exe path and going live end to 
 - **Designed for two machines, not one.** The primary target is a dedicated gaming PC (runs only the game/capture) plus a separate streaming PC (runs OBS and OneEncode) — the gaming machine never carries any transcode load. A single-machine setup works as a fallback, but more than roughly two concurrent encode paths on one machine has caused real contention/lag in testing.
 - **NVENC session limits vary by GPU and driver.** Consumer NVIDIA cards have historically capped concurrent hardware-encode sessions. Always run `npm run probe:nvenc` on your own machine rather than assuming a number — the pipeline uses whatever ceiling it actually measures.
 
+## Performance
+
+Live-tested on a streaming PC with an RTX 2080 Ti: a synthetic 2560×1440@60 source scaled from 1 to 10 concurrent renditions, sampling CPU and NVENC/NVDEC utilization at each step (v0.1.0 vs. v0.2.0, same machine, same probed NVENC ceiling).
+
+| Renditions | CPU (v0.1.0) | CPU (v0.2.0) | NVDEC (v0.1.0) | NVDEC (v0.2.0) | Restarts |
+|---|---|---|---|---|---|
+| 1  | 15.0% | 8.8%  | 0% | 36.0% | 0 |
+| 4  | 24.6% | 12.2% | 0% | 11.8% | 0 |
+| 8  | 36.0% | 13.8% | 0% | 11.9% | 0 |
+| 10 | 30.9% | 13.2% | 0% | 9.9%  | 30 (both) |
+
+v0.2.0's auto-detected GPU decode (see Features above) cuts average CPU load roughly in half at every step and is the only version that ever touches the NVDEC engine. Both versions hit the same wall at 10 concurrent renditions — NVENC saturates at 100% and the restart supervisor kicks in identically either way, since that's a hardware ceiling on the encode chip itself, not something either version's software changes. Zero dropped frames in every single run, including the ones that eventually restarted. On this GPU, **8 concurrent renditions is the practical safe ceiling** at 1080p–1440p60 profiles.
+
 ## Not a cloud service
 
 OneEncode runs entirely on your own machine(s) — there's no third-party service in the data path between your encoder and each destination platform. This is a different tradeoff than a hosted multistreaming SaaS: you manage your own FFmpeg/MediaMTX/Node install and your own credentials, in exchange for not routing your stream through someone else's servers.

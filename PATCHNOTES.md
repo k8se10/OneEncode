@@ -9,6 +9,19 @@ Summary of what's new since v0.1.0 — full detail in the entries below, oldest 
 - **Hot-reload + non-destructive config writes**: editing `config/legs.local.yaml` (dashboard or by hand) now applies automatically within about a second, restarting only what actually needs it — never the whole app. Dashboard writes now preserve hand-added comments and are atomic. An `rtmp-push` leg always lands staged after any edit, even if it was live — no silent auto-resumed broadcast.
 - **Graceful startup + a "waiting for OBS" indicator**: the dashboard is now reachable the instant OneEncode starts, not only after a source connects — with a pulsating "Waiting for OBS connection…" badge that flashes "Connected" once real frames flow. General dashboard polish (transitions, fade-ins, tactile buttons) landed in the same pass.
 
+### Benchmarked against v0.1.0
+
+Live scaling test on an RTX 2080 Ti streaming PC — synthetic 2560×1440@60 source, 1 to 10 concurrent local-file renditions, 120s steady-state per step, `nvidia-smi dmon` + CPU sampled throughout:
+
+| Renditions | CPU (v0.1.0) | CPU (v0.2.0) | NVDEC (v0.1.0) | NVDEC (v0.2.0) | Restarts |
+|---|---|---|---|---|---|
+| 1  | 15.0% | 8.8%  | 0% | 36.0% | 0 |
+| 4  | 24.6% | 12.2% | 0% | 11.8% | 0 |
+| 8  | 36.0% | 13.8% | 0% | 11.9% | 0 |
+| 10 | 30.9% | 13.2% | 0% | 9.9%  | 30 (both) |
+
+~49% lower average CPU and ~27% tighter delivered-bitrate CoV across the stable range (n=1–8), and v0.2.0 is the only version that ever uses the NVDEC decode engine — v0.1.0 sits flat at 0% in every single scenario. Both versions hit an identical wall at n=10 (100% NVENC, 30 restarts, 10 permanent failures each) — a real hardware ceiling on the 2080 Ti's encode chip, unaffected by either version's own changes. Zero dropped frames anywhere, including the runs that eventually restarted. Methodology note: neither version's `state/nvenc-ceiling.json` had actually been probed before this test, so early runs above 3 concurrent renditions were silently falling back to CPU-based `libx264` — caught mid-run from unexpectedly high CPU numbers, the real ceiling was probed (≥16 concurrent NVENC sessions, no failure) and the affected scenarios re-run; the numbers above are from the corrected runs.
+
 ## Added — graceful startup, a "waiting for OBS" indicator, and general dashboard polish
 
 Direct user request: starting OneEncode then quickly switching to OBS was awkward — OBS won't let you start streaming until it can actually connect, and there was no way to tell from OneEncode's side whether it was ready, since the dashboard itself didn't exist yet during that wait.
