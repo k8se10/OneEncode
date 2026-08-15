@@ -39,7 +39,15 @@ function videoEncodeArgs(encoder: EncoderName, rendition: Rendition): string[] {
           "-rc", "cbr",
           "-b:v", `${bv}k`,
           "-maxrate", `${bv}k`,
-          "-bufsize", `${bv * 2}k`,
+          // A 1x-bitrate VBV buffer (1s window) instead of 2x -- a wider
+          // buffer still satisfies "CBR" on average but lets short-term
+          // bitrate swing much further before the constraint bites, which
+          // is exactly the spiky, bursty-looking delivered bitrate a real
+          // Twitch Inspector capture showed (avg right on target, but wide
+          // per-second swings). 1x matches standard live-CBR-streaming
+          // guidance; a looser buffer is more appropriate for local
+          // VBR/CQ recording where burstiness doesn't matter.
+          "-bufsize", `${bv}k`,
           "-g", gop, "-bf", "2",
         ];
       }
@@ -67,7 +75,10 @@ function videoEncodeArgs(encoder: EncoderName, rendition: Rendition): string[] {
           "-preset", "veryfast",
           "-b:v", `${bv}k`,
           "-maxrate", `${bv}k`,
-          "-bufsize", `${bv * 2}k`,
+          // Same tightened 1x-bitrate VBV buffer as the NVENC branch above --
+          // see that comment for why (real Twitch Inspector evidence of a
+          // too-loose 2x buffer producing bursty delivered bitrate).
+          "-bufsize", `${bv}k`,
           "-g", gop,
         ];
       }

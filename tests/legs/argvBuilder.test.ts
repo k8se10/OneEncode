@@ -35,6 +35,12 @@ describe("buildEncodeArgv", () => {
     expect(argv.at(-1)).toBe("rtmp://real.example.com/live/SECRET_KEY");
     expect(argv.at(-2)).toBe("flv");
     expect(argv.at(-3)).toBe("-f");
+    // Regression test: bufsize used to be 2x the target bitrate, which a
+    // real Twitch Inspector capture showed let "CBR" swing wide enough to
+    // look bursty/VBR-like (avg on target, but noisy per-second delivery).
+    // 1x (a 1s VBV window) is the standard tightened setting for live CBR.
+    const bufsizeIdx = argv.indexOf("-bufsize");
+    expect(argv[bufsizeIdx + 1]).toBe("6000k");
     // no shell string anywhere — every element is a discrete argv token
     for (const token of argv) {
       expect(typeof token).toBe("string");
@@ -57,6 +63,21 @@ describe("buildEncodeArgv", () => {
     expect(argv).toContain("-cq");
     expect(argv).toContain("19");
     expect(argv.at(-1)).toBe("D:\\projects\\OneEncode\\recordings\\archive_test.mp4");
+  });
+
+  it("uses a 1x-bitrate bufsize for libx264's bitrate-based branch too (same tightened CBR fix as NVENC)", () => {
+    const rendition: Rendition = {
+      ...baseRendition,
+      resolution: "source",
+      videoBitrateKbps: 3500,
+      encoderPreference: ["libx264"],
+    };
+    const argv = buildEncodeArgv("rtmp://127.0.0.1:1935/relay/live", rendition, "libx264", {
+      kind: "local-file",
+      path: "out.mp4",
+    });
+    const bufsizeIdx = argv.indexOf("-bufsize");
+    expect(argv[bufsizeIdx + 1]).toBe("3500k");
   });
 
   it("throws if neither videoQuality nor videoBitrateKbps is set", () => {

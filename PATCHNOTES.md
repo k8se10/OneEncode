@@ -1,5 +1,15 @@
 # PATCHNOTES
 
+## Fixed — "CBR" was allowed to swing like VBR, found via Twitch Inspector
+
+Real destination-side evidence, same lesson as the earlier YouTube-30fps investigation (a destination platform's own tooling can catch things purely local stats can't): Twitch Inspector's bitrate graph for `shared-1080p60` (target 6000kbps CBR) showed a spiky, noisy delivered bitrate swinging roughly 4000–8500+ Kbps over a 2-hour stream — average right on target (6018 vs 6000), but Twitch's own Configuration Check flagged "average bitrate too high... could cause buffering" on the peaks. OneEncode's own leg stats wouldn't have caught this — `drop=`/`dup=`/`speed` don't measure bitrate consistency, only frame counts and pacing.
+
+**Root cause**: `videoEncodeArgs` (`src/legs/argvBuilder.ts`) set `-bufsize` to **2x** the target bitrate for both the NVENC (`-rc cbr`) and libx264 bitrate-based branches. A VBV buffer that large gives the rate controller a 2-second averaging window — still nominally "CBR" (bounded over that window) but with plenty of room for short-term bursts/dips before the constraint actually bites, which is exactly the bursty pattern in the graph.
+
+**Fix**: tightened `-bufsize` to **1x** the target bitrate (a 1-second window) on both branches — the standard setting for live-stream CBR tightness; a looser buffer is more appropriate for local VBR/CQ recording where burstiness doesn't matter. Regression tests added (`tests/legs/argvBuilder.test.ts`) locking the bufsize value down on both the NVENC and libx264 paths so this can't silently drift back.
+
+**Verification status, stated honestly**: this fix is grounded in standard, well-established NVENC/libx264 CBR-streaming practice, not guesswork — but it has **not yet been re-verified against a fresh live Twitch Inspector capture**. Next real stream against `shared-1080p60` should be checked to confirm the bitrate graph actually flattens out as expected before this gets marked closed the way the YouTube-30fps investigation was.
+
 ## v0.1.0 — First public release
 
 Everything below this entry (and the entries following it) is the development history that led here. Summary of what's actually shipping in this first tagged release:
