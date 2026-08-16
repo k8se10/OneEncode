@@ -332,6 +332,19 @@ export function buildCombinedRelayAndRenditionsArgv(
     "-loglevel", "warning",
     "-stats",
     ...(useCuda ? ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"] : []),
+    // NVDEC/CUVID has a hard internal cap of 32 decode surfaces. ffmpeg's
+    // default auto-threading (-threads 0) picks a decode thread count based
+    // on CPU core count, and on a machine with enough cores that pushes the
+    // requested surface count over 32, making cuvidCreateDecoder fail with
+    // CUDA_ERROR_INVALID_VALUE -- real failure hit on a live streaming-PC
+    // deployment (13 threads -> 34 surfaces requested), confirmed via
+    // ffmpeg's own stderr, which explicitly suggests lowering the thread
+    // count. Hardware NVDEC decode barely benefits from more CPU threads
+    // anyway (the actual decode work runs on the GPU), so capping this low
+    // is effectively free. Only applies to the CUDA/NVDEC decode path --
+    // software decode doesn't hit this surface limit and benefits from more
+    // threads, so it's left on ffmpeg's own default there.
+    ...(useCuda ? ["-threads", "4"] : []),
     // A real live RTMP source (unlike the synthetic lavfi source every
     // prior test in this project used) can need more time/data than
     // ffmpeg's defaults (analyzeduration=5s, probesize=5MB) allow before

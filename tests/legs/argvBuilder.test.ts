@@ -322,6 +322,56 @@ describe("buildCombinedRelayAndRenditionsArgv", () => {
       expect(argv).toContain("[vr0s]"); // mapped straight from the scaled CUDA label
     });
 
+    it("caps decode threads at 4 when decodeHwaccel is on, to stay under NVDEC's 32-decode-surface limit", () => {
+      // Real production bug (2026-08-16): a streaming PC with enough CPU
+      // cores hit ffmpeg's default auto-threading picking 13 decode
+      // threads, pushing NVDEC's requested surface pool to 34 -- over the
+      // driver's hard 32-surface cap -- so cuvidCreateDecoder failed with
+      // CUDA_ERROR_INVALID_VALUE and crashed the whole combined process on
+      // every real OBS connect. ffmpeg's own stderr explicitly suggested
+      // lowering the thread count.
+      const rendition: Rendition = {
+        id: "r1",
+        resolution: { width: 1920, height: 1080 },
+        fps: 60,
+        videoBitrateKbps: 6000,
+        audioBitrateKbps: 160,
+        keyframeIntervalSec: 2,
+        encoderPreference: ["h264_nvenc"],
+      };
+      const argv = buildCombinedRelayAndRenditionsArgv(
+        "rtmp://127.0.0.1:1935/ingest/live",
+        "rtmp://127.0.0.1:1935/relay/live",
+        relayOpts,
+        [{ rendition, encoder: "h264_nvenc", outputUrl: "rtmp://127.0.0.1:1935/rendition/r1/live" }],
+        { decodeHwaccel: true },
+      );
+      const threadsIdx = argv.indexOf("-threads");
+      expect(threadsIdx).toBeGreaterThan(-1);
+      expect(argv[threadsIdx + 1]).toBe("4");
+      // Must come before -i so it applies to the decoder, not an encoder output.
+      expect(threadsIdx).toBeLessThan(argv.indexOf("-i"));
+    });
+
+    it("does not cap decode threads when decodeHwaccel is off (software decode benefits from more threads)", () => {
+      const rendition: Rendition = {
+        id: "r1",
+        resolution: { width: 1920, height: 1080 },
+        fps: 60,
+        videoBitrateKbps: 6000,
+        audioBitrateKbps: 160,
+        keyframeIntervalSec: 2,
+        encoderPreference: ["h264_nvenc"],
+      };
+      const argv = buildCombinedRelayAndRenditionsArgv(
+        "rtmp://127.0.0.1:1935/ingest/live",
+        "rtmp://127.0.0.1:1935/relay/live",
+        relayOpts,
+        [{ rendition, encoder: "h264_nvenc", outputUrl: "rtmp://127.0.0.1:1935/rendition/r1/live" }],
+      );
+      expect(argv).not.toContain("-threads");
+    });
+
     it("downloads back to system memory only for a non-NVENC target when decodeHwaccel is on (mixed NVENC + libx264)", () => {
       const nvencRendition: Rendition = {
         id: "nvenc-target",

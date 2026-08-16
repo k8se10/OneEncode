@@ -1,5 +1,9 @@
 # PATCHNOTES
 
+## v0.2.1
+
+**Fixed a real crash-on-connect bug found on the actual streaming PC (2026-08-16), not synthetic-source-tested.** The combined decode/rendition process crashed every time OBS actually connected, permanently failing after 5 restarts and cascading into every downstream leg failing too. Root cause, confirmed from real ffmpeg stderr: NVDEC/CUVID has a hard internal cap of 32 decode surfaces; ffmpeg's default auto-threading picked 13 decode threads on this machine's CPU, which pushed the requested surface pool to 34 — over the cap — so `cuvidCreateDecoder` failed with `CUDA_ERROR_INVALID_VALUE`, cascading through a filter-graph failure into the whole process dying. ffmpeg's own stderr explicitly suggested lowering the thread count. Fixed by capping decode threads to `-threads 4` on the CUDA/NVDEC input path (`src/legs/argvBuilder.ts`) — hardware NVDEC decode barely benefits from more CPU threads anyway, since the actual decode work runs on the GPU. Software-decode path is untouched (no surface limit there, and it benefits from more threads). Two regression tests added locking in the argv shape. **Not yet live-verified on the affected streaming PC** — the dev machine's CPU core count doesn't reproduce the original crash, so this needs real confirmation there before being considered closed.
+
 ## v0.2.0
 
 Summary of what's new since v0.1.0 — full detail in the entries below, oldest at the bottom of this block.
