@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="OneEncode" width="220">
+</p>
+
 # OneEncode
 
 A local, one-encode-to-many-transcode restreaming pipeline for Windows: decode a live source **exactly once**, then fan out to as many destination-tuned renditions as you need — each one running as its own isolated, supervised process, and each destination getting the format it actually needs instead of one blind push to everywhere.

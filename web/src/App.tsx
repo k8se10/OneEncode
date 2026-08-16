@@ -72,6 +72,7 @@ function LoginGate({ onAuthed }: { onAuthed: (token: string) => void }) {
 
   return (
     <div className="login-gate">
+      <img className="logo" src="/logo.png" alt="OneEncode" />
       <h1>OneEncode Dashboard</h1>
       <p>Paste the dashboard token (printed at orchestrator startup, or in <code>state/ui-token.txt</code>):</p>
       <input
@@ -254,7 +255,10 @@ function App() {
       )}
 
       <header>
-        <h1>OneEncode Dashboard</h1>
+        <div className="header-title">
+          <img className="logo logo-header" src="/logo.png" alt="OneEncode" />
+          <h1>OneEncode Dashboard</h1>
+        </div>
         <div className="tabs">
           <button className={tab === "monitor" ? "tab active" : "tab"} onClick={() => setTab("monitor")}>
             Monitor
