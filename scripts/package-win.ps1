@@ -132,6 +132,14 @@ Copy-Item -Path "config/secrets.local.example.yaml" -Destination "$releaseDir/co
 Copy-Item -Path "config/platformProfiles.yaml" -Destination "$releaseDir/config/platformProfiles.yaml" -Force
 Copy-Item -Path "config/mediamtx.yml" -Destination "$releaseDir/config/mediamtx.yml" -Force
 
+if (Test-Path "$releaseDir/web/dist") {
+    # Copy-Item -Recurse nests instead of overwriting when the destination
+    # directory already exists (e.g. a prior build in the same
+    # dist-release/OneEncode folder) -- producing web/dist/dist and leaving
+    # the OLD dashboard build's files in place at web/dist itself. Remove
+    # the stale destination first so this is always a clean copy.
+    Remove-Item -Recurse -Force "$releaseDir/web/dist"
+}
 Copy-Item -Path "web/dist" -Destination "$releaseDir/web/dist" -Recurse -Force
 Copy-Item -Path "LICENSE" -Destination "$releaseDir/LICENSE" -Force
 
